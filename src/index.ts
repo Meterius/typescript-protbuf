@@ -1,4 +1,4 @@
-import {ModuleKind, Project, PropertySignature, ScriptTarget, SourceFile, SyntaxKind, Type, UnionTypeNode} from "ts-morph";
+import {EnumDeclaration, ModuleKind, Project, PropertySignature, ScriptTarget, SourceFile, SyntaxKind, Type} from "ts-morph";
 import protobuf from "protobufjs";
 import path from "path";
 
@@ -24,6 +24,7 @@ export function generateProtoAndSetupFile(
   const lines: string[] = ["syntax = \"proto3\";", "package compiled;", ""];
   const collectedNodes = new Set<string>();
   const interfaceUnionFields: Record<string, [string, Type[]][]> = {};
+  const interfaceEnumFields: Record<string, [string, string][]> = {};
 
   let indentLevel = 0;
 
@@ -52,7 +53,7 @@ export function generateProtoAndSetupFile(
     }
   });
 
-  function parseType(type: Type): [string, string] | null {
+  function parseType(type: Type, member?: PropertySignature): [string, string] | null {
     let rule = '';
     let effectiveType = type;
 
@@ -78,15 +79,22 @@ export function generateProtoAndSetupFile(
       } else if (source.getEnum(effTypeName)) {
         const enumDec = source.getEnumOrThrow(effTypeName);
 
-        if (enumDec.getMembers().some(member => typeof member.getValue() === "number")) {
-          return [rule, 'int32'];
-        } else {
-          callbacks.push(() => {
-            collectEnum(effTypeName);
-          });
-
-          return [rule, effTypeName];
+        if (
+          member
+          && member.getParent()?.isKind(SyntaxKind.InterfaceDeclaration)
+        ) {
+          const memberInterfaceName = member.getParentOrThrow().getSymbolOrThrow().getName();
+          if (!(memberInterfaceName in interfaceEnumFields)) {
+            interfaceEnumFields[memberInterfaceName] = [];
+          }
+          interfaceEnumFields[memberInterfaceName].push([member.getName(), effTypeName]);
         }
+
+        callbacks.push(() => {
+          collectEnum(effTypeName);
+        });
+
+        return [rule, effTypeName];
       }
 
       return null;
@@ -152,7 +160,7 @@ export function generateProtoAndSetupFile(
 
       withIndent(() => {
         node.getMembers().forEach((member, idx) => {
-          writeLine(`${member.getName()} = ${idx};`);
+          writeLine(`${name.toUpperCase()}_${idx} = ${idx};`);
         });
       });
 
@@ -217,7 +225,7 @@ export function generateProtoAndSetupFile(
           }
 
           if (!fieldType) {
-            fieldType = parseType(memberType)?.[1] ?? 'undefined';
+            fieldType = parseType(memberType, member)?.[1] ?? 'undefined';
           }
 
           writeLine(`${fieldRule}${fieldType} ${member.getSymbolOrThrow().getName()} = ${idx + 1};`);
@@ -247,11 +255,33 @@ export function generateProtoAndSetupFile(
     'export function load() {',
     `\tconst root = protobuf.Root.fromJSON(schema);`,
     '',
-    ...Object.entries(interfaceUnionFields).flatMap(([name, fields]) => {
+    '\tconst valueToEnumTranslator: Record<string, any[]> = {',
+    ...source.getEnums().flatMap(enumDec => {
       return [
+        `\t\t${JSON.stringify(enumDec.getName())}: [${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}],`,
+      ];
+    }),
+    '\t};',
+    '',
+    '\tconst enumToValueTranslator: Record<string, Record<any, any>> = {',
+    ...source.getEnums().flatMap(enumDec => {
+      return [
+        `\t\t${JSON.stringify(enumDec.getName())}: {`,
+        ...enumDec.getMembers().map((mem, idx) => `\t\t\t${JSON.stringify(mem.getValue())}: ${idx},`),
+        '\t\t},',
+      ];
+    }),
+    '\t};',
+    '',
+    ...source.getInterfaces().flatMap((intDec) => {
+      const name = intDec.getName();
+      const unionFields = interfaceUnionFields[name] ?? [];
+      const enumFields = interfaceEnumFields[name] ?? [];
+
+      return unionFields.length > 0 || enumFields.length > 0 ? [
         `protobuf.wrappers[".compiled.${name}"] = {`,
         `\tfromObject(this: any, data: Record<string, any>) {`,
-        ...fields.flatMap(([fieldName, fieldTypes]) => {
+        ...unionFields.flatMap(([fieldName, fieldTypes]) => {
           const buildCaseCatch = (typeofValue: string) => {
             const optionKey = `option${fieldTypes.findIndex(
               child => (
@@ -271,6 +301,9 @@ export function generateProtoAndSetupFile(
 
           return [
             `switch (typeof data[${JSON.stringify(fieldName)}]) {`,
+            '\tcase "undefined":',
+            '\t\tbreak;',
+            '',
             ...(fieldTypes.some(child => child.isNumber()) ? buildCaseCatch('number') : []),
             ...(fieldTypes.some(child => child.isString()) ? buildCaseCatch('string') : []),
             ...(fieldTypes.some(child => child.isBoolean()) ? buildCaseCatch('boolean') : []),
@@ -280,20 +313,27 @@ export function generateProtoAndSetupFile(
             '',
           ].map(line => `\t\t${line}`);
         }),
+        ...(enumFields.flatMap(([fieldName, enumName]) => [
+          `\t\tdata[${JSON.stringify(fieldName)}] = enumToValueTranslator[${JSON.stringify(enumName)}][data[${JSON.stringify(fieldName)}]];`,
+        ])),
+        '',
         `\t\treturn this.fromObject(data);`,
         `\t},`,
         `\ttoObject(this: any, data: Record<string, any>, options: Record<string, any> | undefined) {`,
         `\t\tconst original = this.toObject(data, options);`,
         '',
-        ...(fields.flatMap(([fieldName, fieldTypes]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = ${fieldTypes.map((_, idx) => `original[${JSON.stringify(fieldName)}].option${idx + 1}`).join(' ?? ')};`,
+        ...(unionFields.flatMap(([fieldName, fieldTypes]) => [
+          `\t\toriginal[${JSON.stringify(fieldName)}] = original[${JSON.stringify(fieldName)}] !== undefined ? ${fieldTypes.map((_, idx) => `original[${JSON.stringify(fieldName)}].option${idx + 1}`).join(' ?? ')} : undefined;`,
+        ])),
+        ...(enumFields.flatMap(([fieldName, enumName]) => [
+          `\t\toriginal[${JSON.stringify(fieldName)}] = valueToEnumTranslator[${JSON.stringify(enumName)}][original[${JSON.stringify(fieldName)}]];`,
         ])),
         '',
         `\t\treturn original`,
         `\t},`,
         `};`,
         '',
-      ].map(line => `\t${line}`);
+      ].map(line => `\t${line}`) : [];
     }),
     '',
     '\treturn root;',

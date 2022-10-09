@@ -1,5 +1,5 @@
-import {Star, StatusString} from "./example";
-import { load } from "./example.proto.setup";
+import {Star, Status, StatusString} from "./example";
+import {load} from "./example.proto.setup";
 
 async function main() {
   const root = load();
@@ -22,7 +22,7 @@ async function main() {
   const decodedInstance = Star.decode(buffer);
 
   console.log(
-    buffer.length, decodedInstance, Star.toObject(decodedInstance)
+    buffer.length, Star.toObject(decodedInstance)
   );
 }
 

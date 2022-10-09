@@ -11,7 +11,7 @@ export enum StatusString {
 export interface Star {
   size: number | boolean;
   status: Status;
-  statusStr: StatusString;
+  statusStr?: StatusString;
   child?: Star;
 }
 
