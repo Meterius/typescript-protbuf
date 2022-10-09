@@ -1,0 +1,29 @@
+{
+  "name": "typescript-protbuf",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test:generate": "ts-node src/bin.ts generate test/example.ts test/example.proto test/example.proto.json test/example.proto.setup.ts",
+    "test:encode-decode": "ts-node test/example-encode-decode.ts",
+    "test": "npm run test:generate && npm run test:encode-decode"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Meterius/typescript-protbuf.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Meterius/typescript-protbuf/issues"
+  },
+  "homepage": "https://github.com/Meterius/typescript-protbuf#readme",
+  "dependencies": {
+    "protobufjs": "^7.1.2",
+    "ts-morph": "^16.0.0",
+    "typescript": "^4.8.4"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.1"
+  }
+}
