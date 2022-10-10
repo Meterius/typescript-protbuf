@@ -1,4 +1,4 @@
-import {clone} from "lodash";
+import {clone, isEqual} from "lodash";
 import {Star, StatusString} from "./example";
 import {load} from "./example.proto.lib";
 
@@ -81,6 +81,7 @@ async function main() {
 
   if (print) {
     console.log(JSON.stringify(Star.toObject(protoDecoding, { defaults: true }), undefined, " "));
+    console.log("Equals", isEqual(Star.toObject(protoDecoding, { defaults: true }), instanceData));
   }
 
   const encodingJsonStart = Date.now();

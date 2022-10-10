@@ -596,6 +596,7 @@ export function generateProtoAndSetupFile(
         ])),
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
           `\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
+          `\tdelete original[${JSON.stringify(fieldName)}];`,
         ]),
         '',
         `\t\treturn original`,
