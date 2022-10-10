@@ -1,10 +1,11 @@
 {
-  "name": "@meterius/typescript-protbuf",
+  "name": "@meterius/typescript-protobuf",
   "version": "1.0.0-alpha.1",
   "description": "Automatically generates proto, JSON proto file, and code to transmit typescript coded data using protobufjs",
   "main": "src/index.ts",
   "files": [
-    "src/**/*"
+    "src/**/*",
+    "bin/**/*"
   ],
   "bin": {
     "typescript-protobuf": "bin/typescript-protobuf.js"
@@ -19,7 +20,7 @@
     "url": "git+https://github.com/Meterius/typescript-protbuf.git"
   },
   "author": "Jonah Leander Hoff",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/Meterius/typescript-protbuf/issues"
   },
