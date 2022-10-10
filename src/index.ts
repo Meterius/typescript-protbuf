@@ -36,16 +36,21 @@ export function generateProtoAndSetupFile(
   const collectedNodes = new Set<string>();
   const interfaceUnionFields: Record<string, [string, Type[], string | null, boolean][]> = {};
   const interfaceEnumFields: Record<string, [string, string][]> = {};
+  const interfaceNullFields: Record<string, [string, boolean][]> = {};
 
   let indentLevel = 0;
 
-  function getScalar(type: Type): "string" | "number" | "boolean" | null {
+  const NullEnum = "SpecialNullSubstitute";
+
+  function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
     if (type.isNumber()) {
       return "number";
     } else if (type.isString()) {
       return "string";
     } else if (type.isBoolean()) {
       return "boolean";
+    } else if (type.isNull()) {
+      return "null";
     } else {
       return null;
     }
@@ -85,12 +90,15 @@ export function generateProtoAndSetupFile(
       effectiveType = effectiveType.getArrayElementTypeOrThrow();
     }
 
-    if (effectiveType.isNumber()) {
-      return [rule, 'float'];
-    } else if (effectiveType.isBoolean()) {
-      return [rule, 'bool'];
-    } else if (effectiveType.isString()) {
-      return [rule, 'string'];
+    const scalar = getScalar(effectiveType);
+
+    if (scalar) {
+      return [rule, {
+        string: "string",
+        number: "float",
+        null: NullEnum,
+        boolean: "bool",
+      }[scalar]];
     } else {
       const effTypeName = effectiveType.getSymbol()?.getName() ?? '';
 
@@ -274,6 +282,14 @@ export function generateProtoAndSetupFile(
 
           if (!fieldType) {
             fieldType = parseType(memberType, member)?.[1] ?? 'undefined';
+
+            if (fieldType === NullEnum) {
+              if (!(name in interfaceNullFields)) {
+                interfaceNullFields[name] = [];
+              }
+
+              interfaceNullFields[name].push([member.getName(), fieldRule === 'repeated '])
+            }
           }
 
           writeLine(`${fieldRule}${fieldType} ${member.getSymbolOrThrow().getName()} = ${idx + 1};`);
@@ -284,6 +300,11 @@ export function generateProtoAndSetupFile(
       writeLine();
     }
   }
+
+  writeLine(`enum ${NullEnum} {`);
+  writeLine('\tNullSubstitution_0 = 0;');
+  writeLine('}');
+  writeLine();
 
   while (callbacks.length > 0) {
     callbacks.splice(0, 1)[0]();
@@ -365,8 +386,9 @@ export function generateProtoAndSetupFile(
       const name = intDec.getName();
       const unionFields = interfaceUnionFields[name] ?? [];
       const enumFields = interfaceEnumFields[name] ?? [];
+      const nullFields = interfaceNullFields[name] ?? [];
 
-      return unionFields.length > 0 || enumFields.length > 0 ? [
+      return unionFields.length > 0 || enumFields.length > 0 || nullFields.length > 0 ? [
         `protobuf.wrappers[".compiled.${name}"] = {`,
         `\tfromObject(this: any, data: Record<string, any>) {`,
         ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
@@ -385,32 +407,54 @@ export function generateProtoAndSetupFile(
             ]
           };
 
-          let objectCase: string[];
-          if (fieldTypes.some(child => !getScalar(child))) {
-            objectCase = fieldTypes.filter(child => !getScalar(child)).length === 1 ? [
+          const nullOptionIndex = fieldTypes.findIndex(child => getScalar(child) === "null");
+
+          const objectCase: string[] = [];
+          if (fieldTypes.some(child => !getScalar(child)) || nullOptionIndex !== -1) {
+            objectCase.push(
               '\tcase "object":',
-              `\t\tif (${dataExpression} === null) { throw new Error("Unsupported"); }`,
-              `\t\t${dataExpression} = { option${
-                fieldTypes.findIndex(child => !getScalar(child)) + 1
-              }: ${dataExpression} };`,
-              '\t\tbreak;',
-              '',
-            ] : [
-              '\tcase "object":',
-              `\t\tif (${dataExpression} === null) { throw new Error("Unsupported"); }`,
-              `\t\t${dataExpression} = {`,
-              `\t\t\t[unionInterfaceTypeToOptionTranslator[${JSON.stringify(intDec.getName() + "." + fieldName)}][${
-                makeInterfaceFieldUnionInterfaceNameGetter(
-                  fieldUnionName ?? (intDec.getName() + "." + fieldName),
-                  dataExpression,
-                )
-              }]]: ${dataExpression},`,
-              `\t\t};`,
-              '\t\tbreak;',
-              '',
-            ]
-          } else {
-            objectCase = [];
+              ...(
+                nullOptionIndex === -1 ? [
+                  `\t\tif (${dataExpression} === null) {`,
+                  `\t\t\tthrow new Error("Unsupported");`,
+                  `\t\t} else {`,
+                ] : [
+                  `\t\tif (${dataExpression} === null) {`,
+                  `\t\t\t${dataExpression} = { option${nullOptionIndex + 1}: 0 };`,
+                  `\t\t} else {`,
+                ]
+              ),
+            );
+
+            const nonScalarFieldTypes = fieldTypes.filter(child => !getScalar(child));
+
+            if (nonScalarFieldTypes.length === 0) {
+              objectCase.push(
+                `\t\t\tthrow new Error("Unsupported");`,
+              );
+            } else if (nonScalarFieldTypes.length === 1) {
+              objectCase.push(
+                `\t\t\t${dataExpression} = { option${
+                  fieldTypes.findIndex(child => !getScalar(child)) + 1
+                }: ${dataExpression} };`,
+              );
+            } else {
+              objectCase.push(
+                `\t\t\t${dataExpression} = {`,
+                `\t\t\t\t[unionInterfaceTypeToOptionTranslator[${JSON.stringify(intDec.getName() + "." + fieldName)}][${
+                  makeInterfaceFieldUnionInterfaceNameGetter(
+                    fieldUnionName ?? (intDec.getName() + "." + fieldName),
+                    dataExpression,
+                  )
+                }]]: ${dataExpression},`,
+                `\t\t\t};`,
+                '',
+              );
+            }
+
+            objectCase.push(`\t\t}`);
+            objectCase.push(`\t\tbreak;`);
+            objectCase.push('');
           }
 
           return [
@@ -441,28 +485,47 @@ export function generateProtoAndSetupFile(
         ...(enumFields.flatMap(([fieldName, enumName]) => [
           `\t\tdata[${JSON.stringify(fieldName)}] = enumToValueTranslator[${JSON.stringify(enumName)}][data[${JSON.stringify(fieldName)}]];`,
         ])),
+        ...(nullFields.flatMap(([fieldName, isArray]) => [
+          `\t\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `data[${JSON.stringify(fieldName)}].map(() => 0)` : `0`)} : undefined;`,
+        ])),
         '',
         `\t\treturn this.fromObject(data);`,
         `\t},`,
         `\ttoObject(this: any, data: Record<string, any>, options: Record<string, any> | undefined) {`,
-        `\t\tconst original = this.toObject(data, options);`,
+        `\t\tconst original = this.toObject(data, { ...options, defaults: true });`,
         '',
         ...(unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
           const dataExpression = isArray ? `original[${JSON.stringify(fieldName)}][idx]` : `original[${JSON.stringify(fieldName)}]`;
-          const assignmentLine = `\t\t${dataExpression} = ${dataExpression} !== undefined ? ${fieldTypes.map((_, idx) => `${dataExpression}.option${idx + 1}`).join(' ?? ')} : undefined;`;
+          const nullOptionIndex = fieldTypes.findIndex(child => getScalar(child) === "null");
+
+          const assignmentCollectExpression = fieldTypes.flatMap(
+            (_, idx) => idx !== nullOptionIndex ? [`${dataExpression}.option${idx + 1}`] : []
+          ).join(' ?? ');
+          const assignmentLineExpression = nullOptionIndex !== -1 ? (
+            `${dataExpression}.option${nullOptionIndex + 1} === 0 ? null : (${assignmentCollectExpression})`
+          ) : assignmentCollectExpression;
 
           return isArray ? [
-            `\tif (original[${JSON.stringify(fieldName)}] !== undefined) {`,
-            `\t\toriginal[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
-            `\t\t\t${assignmentLine}`,
-            `\t\t});`,
-            `\t}`,
+            `if (original[${JSON.stringify(fieldName)}] !== undefined) {`,
+            `\toriginal[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
+            `\t\tif (${dataExpression} !== undefined) {`,
+            `\t\t\t${dataExpression} = ${assignmentLineExpression};`,
+            `\t\t}`,
+            `\t});`,
+            `}`,
+            '',
           ] : [
-            assignmentLine,
+            `if (${dataExpression} !== undefined) {`,
+            `\t${dataExpression} = ${assignmentLineExpression};`,
+            `}`,
+            '',
           ];
-        })),
+        })).map(line => `\t\t${line}`),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
           `\t\toriginal[${JSON.stringify(fieldName)}] = valueToEnumTranslator[${JSON.stringify(enumName)}][original[${JSON.stringify(fieldName)}]];`,
+        ])),
+        ...(nullFields.flatMap(([fieldName, isArray]) => [
+          `\t\toriginal[${JSON.stringify(fieldName)}] = original[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `original[${JSON.stringify(fieldName)}].map(() => null)` : `null`)} : undefined;`,
         ])),
         '',
         `\t\treturn original`,

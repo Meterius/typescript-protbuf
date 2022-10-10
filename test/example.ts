@@ -18,6 +18,8 @@ export interface Star {
 
 export interface Planet {
   population: number;
+  notGood?: Alias;
+  test: null[];
   habitable: number | undefined;
   habitable2: undefined | Star | string;
   habitable3: (number | Star)[];
@@ -26,6 +28,8 @@ export interface Planet {
 }
 
 export type PlanetOrStar = Planet | Star;
+
+export type Alias = boolean | null;
 
 export interface SolarSystem {
   items: Planet[];

@@ -10,6 +10,8 @@ async function main() {
     statusStr: StatusString.Paused,
     size2: {
       population: 100,
+      notGood: null,
+      test: [null, null],
       habitable4: [{
         size: 2,children:[],status:1,
       }],
@@ -24,6 +26,7 @@ async function main() {
     instanceData.children?.push({
       size: {
         size2: {
+          test: [],
           population: 100,
           habitable4: [],
           habitable3: [2],
@@ -36,6 +39,7 @@ async function main() {
         children: [],
       },
       size2: {
+        test: [],
         population: 100,
         habitable4: [],
         habitable3: [5],
@@ -48,9 +52,11 @@ async function main() {
     });
   };
 
-  for (let i = 0; i < 1000000; i++) {
+  for (let i = 0; i < 0; i++) {
     addChild();
   }
+
+  console.log(JSON.stringify(instanceData, undefined, " "));
 
   const Star = root.lookupType("Star");
   const instance = Star.fromObject(instanceData);
@@ -62,6 +68,8 @@ async function main() {
   const decodingProtoStart = Date.now();
   const protoDecoding = Star.decode(protoEncoding);
   const decodingProtoEnd = Date.now();
+
+  console.log(JSON.stringify(Star.toObject(protoDecoding, { defaults: true }), undefined, " "));
 
   const encodingJsonStart = Date.now();
   const jsonEncoding = JSON.stringify(instanceData);
