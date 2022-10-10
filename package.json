@@ -1,17 +1,17 @@
 {
   "name": "@meterius/typescript-protobuf",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.3",
   "description": "Automatically generates proto, JSON proto file, and code to transmit typescript coded data using protobufjs",
-  "main": "src/index.ts",
+  "main": "src/",
   "files": [
     "src/**/*",
     "bin/**/*"
   ],
   "bin": {
-    "typescript-protobuf": "bin/typescript-protobuf.js"
+    "typescript-protobuf": "bin/typescript-protobuf.ts"
   },
   "scripts": {
-    "test:generate": "node src/cli.js generate test/example.config.ts",
+    "test:generate": "ts-node bin/typescript-protobuf.ts generate test/example.config.ts",
     "test:encode-decode": "ts-node test/example-encode-decode.ts",
     "test": "npm run test:generate && npm run test:encode-decode"
   },
