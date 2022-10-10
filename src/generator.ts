@@ -16,12 +16,17 @@ export function generateProtoAndSetupFile(
   const interfaceUnionFields: Record<string, [string, Type[], string | null, boolean][]> = {};
   const interfaceEnumFields: Record<string, [string, string][]> = {};
   const interfaceNullFields: Record<string, [string, boolean][]> = {};
+  const interfaceEscapedFieldTranslation: Record<string, [string, string][]> = {};
   const interfaceLiteralFields: Record<string, [string, string][]> = {};
   const literalEnumDefinitions: Record<string, unknown[]> = {};
 
   let indentLevel = 0;
 
   const NullEnum = "SpecialNullSubstitute";
+
+  function getEscapedFieldName(member: PropertySignature) {
+    return member.getName().replaceAll('_', '').toLocaleLowerCase();
+  }
 
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
     if (type.isNumber()) {
@@ -97,7 +102,7 @@ export function generateProtoAndSetupFile(
           if (!(memberInterfaceName in interfaceEnumFields)) {
             interfaceEnumFields[memberInterfaceName] = [];
           }
-          interfaceEnumFields[memberInterfaceName].push([member.getName(), effTypeName]);
+          interfaceEnumFields[memberInterfaceName].push([getEscapedFieldName(member), effTypeName]);
         }
 
         callbacks.push(() => {
@@ -224,6 +229,25 @@ export function generateProtoAndSetupFile(
     if (!collectedNodes.has(name)) {
       collectedNodes.add(name);
 
+      const memberEscapedNames: string[] = [];
+      node.getChildrenOfKind(SyntaxKind.PropertySignature).forEach((member) => {
+          const escapedName = getEscapedFieldName(member);
+
+          if (memberEscapedNames.includes(escapedName)) {
+              throw new Error(`${name}.${member.getName()} is ambiguous when escaped`);
+          } else {
+            memberEscapedNames.push(escapedName);
+          }
+
+          if (escapedName !== member.getName()) {
+            if (!(name in interfaceEscapedFieldTranslation)) {
+              interfaceEscapedFieldTranslation[name] = [];
+            }
+
+            interfaceEscapedFieldTranslation[name].push([escapedName, member.getName()]);
+          }
+      });
+
       writeLine(`message ${name} {`);
 
       withIndent(() => {
@@ -242,7 +266,7 @@ export function generateProtoAndSetupFile(
               memberType.getUnionTypes().some(child => child.isArray())
               && memberType.getUnionTypes().some(child => !child.isArray() && !child.isUndefined())
             ) {
-              throw new Error(`Cannot handle union of arrays and non-arrays at ${name}.${member.getName()}`);
+              throw new Error(`Cannot handle union of arrays and non-arrays at ${name}.${getEscapedFieldName(member)}`);
             }
 
             let requiredUnionTypes;
@@ -257,14 +281,14 @@ export function generateProtoAndSetupFile(
 
             if (memberType.getUnionTypes().some(child => child.isUndefined())) {
               if (fieldRule === 'repeated ') {
-                throw new Error(`Cannot handle optional array at ${name}.${member.getName()}`);
+                throw new Error(`Cannot handle optional array at ${name}.${getEscapedFieldName(member)}`);
               }
 
               fieldRule = 'optional ';
             }
 
             if (isLiteralUnionType(requiredUnionTypes)) {
-              const literalKey = `Literal_${name}_${member.getName()}`;
+              const literalKey = `Literal_${name}_${getEscapedFieldName(member)}`;
               const literalValues = [
                 undefined,
                 ...requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []),
@@ -274,7 +298,7 @@ export function generateProtoAndSetupFile(
                 interfaceLiteralFields[name] = [];
               }
 
-              interfaceLiteralFields[name].push([member.getName(), literalKey]);
+              interfaceLiteralFields[name].push([getEscapedFieldName(member), literalKey]);
 
               callbacks.push(
                 () => createLiteralEnum(literalKey, literalValues),
@@ -291,11 +315,11 @@ export function generateProtoAndSetupFile(
 
               fieldType = addUnion(
                 requiredUnionTypes,
-                `${name}_${member.getSymbolOrThrow().getName()}`
+                `${name}_${getEscapedFieldName(member)}`
               );
 
               interfaceUnionFields[name].push([
-                member.getSymbolOrThrow().getName(),
+                getEscapedFieldName(member),
                 requiredUnionTypes,
                 source.getTypeAlias(fieldType) ? fieldType : null,
                 fieldRule === 'repeated ',
@@ -311,11 +335,11 @@ export function generateProtoAndSetupFile(
                 interfaceNullFields[name] = [];
               }
 
-              interfaceNullFields[name].push([member.getName(), fieldRule === 'repeated '])
+              interfaceNullFields[name].push([getEscapedFieldName(member), fieldRule === 'repeated '])
             }
           }
 
-          writeLine(`${fieldRule}${fieldType} ${member.getSymbolOrThrow().getName()} = ${idx + 1};`);
+          writeLine(`${fieldRule}${fieldType} ${getEscapedFieldName(member)} = ${idx + 1};`);
         });
       });
 
@@ -414,11 +438,19 @@ export function generateProtoAndSetupFile(
       const unionFields = interfaceUnionFields[name] ?? [];
       const enumFields = interfaceEnumFields[name] ?? [];
       const nullFields = interfaceNullFields[name] ?? [];
+      const escapedFields = interfaceEscapedFieldTranslation[name] ?? [];
       const literalFields = interfaceLiteralFields[name] ?? [];
 
-      return unionFields.length > 0 || enumFields.length > 0 || nullFields.length > 0 || literalFields.length > 0 ? [
+      return (
+        unionFields.length > 0 || enumFields.length > 0
+        || nullFields.length > 0 || literalFields.length > 0
+        || escapedFields.length > 0
+      ) ? [
         `protobuf.wrappers[".compiled.${name}"] = {`,
         `\tfromObject(this: any, data: Record<string, any>) {`,
+        ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
+          `\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldOriginalName)}];`,
+        ]),
         ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
           const dataExpression = isArray ? `data[${JSON.stringify(fieldName)}][idx]` : `data[${JSON.stringify(fieldName)}]`;
 
@@ -562,6 +594,9 @@ export function generateProtoAndSetupFile(
         ...(literalFields.flatMap(([fieldName, literalKey]) => [
           `\t\toriginal[${JSON.stringify(fieldName)}] = literalToEnumTranslator[${JSON.stringify(literalKey)}][original[${JSON.stringify(fieldName)}] ?? 0];`,
         ])),
+        ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
+          `\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
+        ]),
         '',
         `\t\treturn original`,
         `\t},`,

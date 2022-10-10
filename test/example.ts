@@ -10,6 +10,8 @@ export enum StatusString {
 
 export interface Star {
   classification?: "Noasdasddsadsasaddsa" | "heyaaaaaaaaaaaaaaaaaaaaaaaaa" | "test";
+  c__lassification3?: "Constant",
+  __lassification4?: "Constant",
   size: number | Star;
   size2?: PlanetOrStar;
   status: Status;

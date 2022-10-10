@@ -1,3 +1,4 @@
+import {clone} from "lodash";
 import {Star, StatusString} from "./example";
 import {load} from "./example.proto.lib";
 
@@ -7,6 +8,8 @@ async function main() {
   const instanceData: Star = {
     size: 5,
     classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
+    c__lassification3: "Constant",
+    __lassification4: "Constant",
     status: 0,
     statusStr: StatusString.Paused,
     size2: {
@@ -66,7 +69,7 @@ async function main() {
   }
 
   const Star = root.lookupType("Star");
-  const instance = Star.fromObject(instanceData);
+  const instance = Star.fromObject(clone(instanceData));
 
   const encodingProtoStart = Date.now();
   const protoEncoding = Star.encode(instance).finish();
