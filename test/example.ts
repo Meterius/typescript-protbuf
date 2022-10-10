@@ -9,6 +9,7 @@ export enum StatusString {
 }
 
 export interface Star {
+  classification?: "Noasdasddsadsasaddsa" | "heyaaaaaaaaaaaaaaaaaaaaaaaaa" | "test";
   size: number | Star;
   size2?: PlanetOrStar;
   status: Status;

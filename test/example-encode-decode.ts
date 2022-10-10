@@ -6,6 +6,7 @@ async function main() {
 
   const instanceData: Star = {
     size: 5,
+    classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
     status: 0,
     statusStr: StatusString.Paused,
     size2: {
@@ -17,14 +18,16 @@ async function main() {
       }],
       habitable3: [4],
       habitable: undefined,
-      habitable2: {size:5,status:0,children:[]},
+      habitable2: {size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
     },
     children: [],
   };
 
   const addChild = () => {
     instanceData.children?.push({
+      classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
       size: {
+        classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
         size2: {
           test: [],
           population: 100,
@@ -52,11 +55,15 @@ async function main() {
     });
   };
 
-  for (let i = 0; i < 0; i++) {
+  const print = true;
+
+  for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
   }
 
-  console.log(JSON.stringify(instanceData, undefined, " "));
+  if (print) {
+    console.log(JSON.stringify(instanceData, undefined, " "));
+  }
 
   const Star = root.lookupType("Star");
   const instance = Star.fromObject(instanceData);
@@ -69,7 +76,9 @@ async function main() {
   const protoDecoding = Star.decode(protoEncoding);
   const decodingProtoEnd = Date.now();
 
-  console.log(JSON.stringify(Star.toObject(protoDecoding, { defaults: true }), undefined, " "));
+  if (print) {
+    console.log(JSON.stringify(Star.toObject(protoDecoding, { defaults: true }), undefined, " "));
+  }
 
   const encodingJsonStart = Date.now();
   const jsonEncoding = JSON.stringify(instanceData);
