@@ -261,27 +261,29 @@ export function generateProtoAndSetupFile(
             memberType = memberType.getArrayElementTypeOrThrow();
           }
 
-          if (memberType.isUnion()) {
+          if (memberType.isUnion() || isLiteralUnionType([memberType])) {
+            const rawUnionTypes = memberType.isUnion() ? memberType.getUnionTypes() : [memberType];
+
             if (
-              memberType.getUnionTypes().some(child => child.isArray())
-              && memberType.getUnionTypes().some(child => !child.isArray() && !child.isUndefined())
+              rawUnionTypes.some(child => child.isArray())
+              && rawUnionTypes.some(child => !child.isArray() && !child.isUndefined())
             ) {
-              throw new Error(`Cannot handle union of arrays and non-arrays at ${name}.${getEscapedFieldName(member)}`);
+              throw new Error(`Cannot handle union of arrays and non-arrays at ${name}.${member.getName()}`);
             }
 
             let requiredUnionTypes;
-            if (memberType.getUnionTypes().every(child => child.isArray() || child.isUndefined())) {
-              requiredUnionTypes = getUnionTypes(memberType.getUnionTypes()
+            if (rawUnionTypes.every(child => child.isArray() || child.isUndefined())) {
+              requiredUnionTypes = getUnionTypes(rawUnionTypes
                 .filter(child => !child.isUndefined()).flatMap(child => child.getArrayElementTypeOrThrow()));
 
               fieldRule = 'repeated ';
             } else {
-              requiredUnionTypes = getUnionTypes(memberType.getUnionTypes().filter(child => !child.isUndefined()));
+              requiredUnionTypes = getUnionTypes(rawUnionTypes.filter(child => !child.isUndefined()));
             }
 
-            if (memberType.getUnionTypes().some(child => child.isUndefined())) {
+            if (rawUnionTypes.some(child => child.isUndefined())) {
               if (fieldRule === 'repeated ') {
-                throw new Error(`Cannot handle optional array at ${name}.${getEscapedFieldName(member)}`);
+                throw new Error(`Cannot handle optional array at ${name}.${member.getName()}`);
               }
 
               fieldRule = 'optional ';
@@ -328,7 +330,7 @@ export function generateProtoAndSetupFile(
           }
 
           if (!fieldType) {
-            fieldType = parseType(memberType, member)?.[1] ?? 'undefined';
+            fieldType = parseType(memberType, member)?.[1];
 
             if (fieldType === NullEnum) {
               if (!(name in interfaceNullFields)) {
@@ -337,6 +339,10 @@ export function generateProtoAndSetupFile(
 
               interfaceNullFields[name].push([getEscapedFieldName(member), fieldRule === 'repeated '])
             }
+          }
+
+          if (!fieldType) {
+            throw new Error(`Could not determine field type of ${name}.${member.getName()}`);
           }
 
           writeLine(`${fieldRule}${fieldType} ${getEscapedFieldName(member)} = ${idx + 1};`);

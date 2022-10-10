@@ -17,11 +17,14 @@ async function main() {
       notGood: null,
       test: [null, null],
       habitable4: [{
+        __lassification4: "Constant",
         size: 2,children:[],status:1,
       }],
       habitable3: [4],
       habitable: undefined,
-      habitable2: {size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
+      habitable2: {
+        __lassification4: "Constant",
+        size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
     },
     children: [],
   };
@@ -29,8 +32,10 @@ async function main() {
   const addChild = () => {
     instanceData.children?.push({
       classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
+      __lassification4: "Constant",
       size: {
         classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
+        __lassification4: "Constant",
         size2: {
           test: [],
           population: 100,
