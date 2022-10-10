@@ -1,10 +1,16 @@
 {
-  "name": "typescript-protbuf",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "@meterius/typescript-protbuf",
+  "version": "1.0.0-alpha.1",
+  "description": "Automatically generates proto, JSON proto file, and code to transmit typescript coded data using protobufjs",
+  "main": "src/index.ts",
+  "files": [
+    "src/**/*"
+  ],
+  "bin": {
+    "typescript-protobuf": "bin/typescript-protobuf.js"
+  },
   "scripts": {
-    "test:generate": "ts-node src/bin.ts generate test/example.config.ts",
+    "test:generate": "node src/cli.js generate test/example.config.ts",
     "test:encode-decode": "ts-node test/example-encode-decode.ts",
     "test": "npm run test:generate && npm run test:encode-decode"
   },
@@ -12,7 +18,7 @@
     "type": "git",
     "url": "git+https://github.com/Meterius/typescript-protbuf.git"
   },
-  "author": "",
+  "author": "Jonah Leander Hoff",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/Meterius/typescript-protbuf/issues"
@@ -22,9 +28,7 @@
     "protobufjs": "^7.1.2",
     "runtypes": "^6.6.0",
     "ts-morph": "^16.0.0",
-    "typescript": "^4.8.4"
-  },
-  "devDependencies": {
+    "typescript": "^4.8.4",
     "ts-node": "^10.9.1"
   }
 }

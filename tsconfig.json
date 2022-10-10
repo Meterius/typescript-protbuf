@@ -14,5 +14,7 @@
     "strictNullChecks": true,
     "useUnknownInCatchVariables": false,
   },
-  "files": ["src/*", "test/*"]
+  "files": [
+    "src/cli"
+  ]
 }
