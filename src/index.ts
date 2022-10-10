@@ -140,15 +140,22 @@ export function generateProtoAndSetupFile(
     ];
   }
 
+  function lookupUnion(types: Type[]): string | undefined {
+    return source.getTypeAliases().find(
+      alias => {
+        if (alias.getType().isUnion()) {
+          const unionTypes = getUnionTypes(alias.getType().getUnionTypes());
+          return unionTypes.every(type => types.includes(type)) && types.every(type => unionTypes.includes(type));
+        } else {
+          return false;
+        }
+      },
+    )?.getName();
+  }
+
   let unionId = 1;
   function addUnion(types: Type[], prefix: string): string {
-    const existingUnionAlias = source.getTypeAliases().find(
-      alias => alias.getType().isUnion() && alias.getType().getUnionTypes().every(
-        type => types.includes(type)
-      ) && types.every(type => alias.getType().getUnionTypes().includes(type)),
-    );
-
-    const typeName = existingUnionAlias?.getName();
+    const typeName = lookupUnion(types);
     const unionName = typeName ?? `Union_${unionId}_${prefix}`;
 
     if (!typeName) {
@@ -255,10 +262,6 @@ export function generateProtoAndSetupFile(
                 requiredUnionTypes,
                 `${name}_${member.getSymbolOrThrow().getName()}`
               );
-
-              if (fieldRule === 'repeated ') {
-                throw new Error(`Cannot handle union array at ${name}.${member.getName()}`);
-              }
 
               interfaceUnionFields[name].push([
                 member.getSymbolOrThrow().getName(),
@@ -444,9 +447,20 @@ export function generateProtoAndSetupFile(
         `\ttoObject(this: any, data: Record<string, any>, options: Record<string, any> | undefined) {`,
         `\t\tconst original = this.toObject(data, options);`,
         '',
-        ...(unionFields.flatMap(([fieldName, fieldTypes]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = original[${JSON.stringify(fieldName)}] !== undefined ? ${fieldTypes.map((_, idx) => `original[${JSON.stringify(fieldName)}].option${idx + 1}`).join(' ?? ')} : undefined;`,
-        ])),
+        ...(unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
+          const dataExpression = isArray ? `original[${JSON.stringify(fieldName)}][idx]` : `original[${JSON.stringify(fieldName)}]`;
+          const assignmentLine = `\t\t${dataExpression} = ${dataExpression} !== undefined ? ${fieldTypes.map((_, idx) => `${dataExpression}.option${idx + 1}`).join(' ?? ')} : undefined;`;
+
+          return isArray ? [
+            `\tif (original[${JSON.stringify(fieldName)}] !== undefined) {`,
+            `\t\toriginal[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
+            `\t\t\t${assignmentLine}`,
+            `\t\t});`,
+            `\t}`,
+          ] : [
+            assignmentLine,
+          ];
+        })),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
           `\t\toriginal[${JSON.stringify(fieldName)}] = valueToEnumTranslator[${JSON.stringify(enumName)}][original[${JSON.stringify(fieldName)}]];`,
         ])),
@@ -462,15 +476,6 @@ export function generateProtoAndSetupFile(
     '}',
     '',
   ];
-
-  /*protobuf.wrappers[".main.Star"] = {
-    fromObject(this: any, data) {
-      return this.fromObject(data);
-    },
-    toObject(this: any, data, options) {
-      return this.toObject(data, options);
-    }
-  }*/
 
   return [protoContent, setupLines.join("\n")];
 }

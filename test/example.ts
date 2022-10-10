@@ -20,8 +20,8 @@ export interface Planet {
   population: number;
   habitable: number | undefined;
   habitable2: undefined | Star | string;
-  habitable3: number[];
-  habitable4: Star[];
+  habitable3: (number | Star)[];
+  habitable4: PlanetOrStar[];
   habitable5?: PlanetOrStar;
 }
 

@@ -48,15 +48,12 @@ async function main() {
     });
   };
 
-  for (let i = 0; i < 0; i++) {
+  for (let i = 0; i < 1000000; i++) {
     addChild();
   }
 
   const Star = root.lookupType("Star");
-
-  console.log(JSON.stringify(instanceData, undefined, " "));
   const instance = Star.fromObject(instanceData);
-  console.log(JSON.stringify(Star.toObject(instance, { defaults: true }), undefined, " "));
 
   const encodingProtoStart = Date.now();
   const protoEncoding = Star.encode(instance).finish();
