@@ -10,23 +10,23 @@ export enum StatusString {
 
 export interface Star {
   size: number | Star;
-  size2: PlanetOrStar;
+  size2?: PlanetOrStar;
   status: Status;
   statusStr?: StatusString;
   children: Star[];
 }
 
 export interface Planet {
-  population?: number;
+  population: number;
   habitable: number | undefined;
   habitable2: undefined | Star | string;
-  habitable3: (number | boolean)[];
-  habitable4: number[] | Star[];
+  habitable3: number[];
+  habitable4: Star[];
   habitable5?: PlanetOrStar;
 }
 
 export type PlanetOrStar = Planet | Star;
 
 export interface SolarSystem {
-  items: PlanetOrStar[];
+  items: Planet[];
 }

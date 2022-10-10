@@ -1,4 +1,14 @@
-import {EnumDeclaration, ModuleKind, Project, PropertySignature, ScriptTarget, SourceFile, SyntaxKind, Type} from "ts-morph";
+import {
+  EnumDeclaration,
+  InterfaceDeclaration,
+  ModuleKind,
+  Project,
+  PropertySignature,
+  ScriptTarget,
+  SourceFile,
+  SyntaxKind,
+  Type
+} from "ts-morph";
 import protobuf from "protobufjs";
 import path from "path";
 import {Config} from "./config";
@@ -24,7 +34,7 @@ export function generateProtoAndSetupFile(
 ): [string, string] {
   const lines: string[] = ["syntax = \"proto3\";", "package compiled;", ""];
   const collectedNodes = new Set<string>();
-  const interfaceUnionFields: Record<string, [string, Type[]][]> = {};
+  const interfaceUnionFields: Record<string, [string, Type[], string | null, boolean][]> = {};
   const interfaceEnumFields: Record<string, [string, string][]> = {};
 
   let indentLevel = 0;
@@ -90,8 +100,6 @@ export function generateProtoAndSetupFile(
         });
         return [rule, effTypeName];
       } else if (source.getEnum(effTypeName)) {
-        const enumDec = source.getEnumOrThrow(effTypeName);
-
         if (
           member
           && member.getParent()?.isKind(SyntaxKind.InterfaceDeclaration)
@@ -133,8 +141,14 @@ export function generateProtoAndSetupFile(
   }
 
   let unionId = 1;
-  function addUnion(parent: Type | undefined, types: Type[], prefix: string): string {
-    const typeName = parent?.getAliasSymbol()?.getName();
+  function addUnion(types: Type[], prefix: string): string {
+    const existingUnionAlias = source.getTypeAliases().find(
+      alias => alias.getType().isUnion() && alias.getType().getUnionTypes().every(
+        type => types.includes(type)
+      ) && types.every(type => alias.getType().getUnionTypes().includes(type)),
+    );
+
+    const typeName = existingUnionAlias?.getName();
     const unionName = typeName ?? `Union_${unionId}_${prefix}`;
 
     if (!typeName) {
@@ -152,7 +166,7 @@ export function generateProtoAndSetupFile(
           withIndent(() => {
             types.forEach((type, idx) => {
               const parsed = parseType(type);
-              writeLine(`${parsed?.[1] ?? 'undefined'} option${idx + 1} = ${idx + 1};`);
+              writeLine(`${parsed?.[1] ?? 'undefined'} option${idx + 1} = ${idx + 2};`);
             });
           });
           writeLine(`}`);
@@ -237,15 +251,21 @@ export function generateProtoAndSetupFile(
                 interfaceUnionFields[name] = [];
               }
 
-              interfaceUnionFields[name].push([
-                member.getSymbolOrThrow().getName(), requiredUnionTypes,
-              ]);
-
               fieldType = addUnion(
-                memberType,
                 requiredUnionTypes,
                 `${name}_${member.getSymbolOrThrow().getName()}`
               );
+
+              if (fieldRule === 'repeated ') {
+                throw new Error(`Cannot handle union array at ${name}.${member.getName()}`);
+              }
+
+              interfaceUnionFields[name].push([
+                member.getSymbolOrThrow().getName(),
+                requiredUnionTypes,
+                source.getTypeAlias(fieldType) ? fieldType : null,
+                fieldRule === 'repeated ',
+              ]);
             }
           }
 
@@ -273,6 +293,16 @@ export function generateProtoAndSetupFile(
     path.join(process.cwd(), jsonFilePath),
   );
 
+  function makeInterfaceFieldUnionInterfaceNameGetter(key: string, dataExpression: string) {
+    const makeGetter = config.unionInterfaceNameGetter?.[key];
+
+    if (!makeGetter) {
+      throw new Error(`Config is missing union interface name getter for entry ${key}`);
+    } else {
+      return makeGetter(dataExpression);
+    }
+  }
+
   const setupLines: string[] = [
     `import protobuf from "protobufjs/light";`,
     `import schema from "./${schemaImportPath}"`,
@@ -298,6 +328,36 @@ export function generateProtoAndSetupFile(
     }),
     '\t};',
     '',
+    `\tconst unionInterfaceTypeToOptionTranslator: Record<string, Record<string, string>> = {`,
+    ...source.getInterfaces().flatMap(intDec => {
+      const nonOneObjectFields = (
+        interfaceUnionFields[intDec.getName()] ?? []
+      ).filter(fields => fields[1].filter(child => !getScalar(child)).length > 1);
+
+      if (nonOneObjectFields.length > 0) {
+        return [
+          ...nonOneObjectFields.flatMap(
+            ([fieldName, fieldTypes]) => [
+              `\t${JSON.stringify(intDec.getName() + "." + fieldName)}: {`,
+              ...fieldTypes.flatMap((fieldType, fieldIndex) => {
+                if (getScalar(fieldType)) {
+                  return [];
+                } else {
+                  return [
+                    `\t\t${JSON.stringify(fieldType.getSymbolOrThrow().getName())}: "option${fieldIndex + 1}",`,
+                  ];
+                }
+              }),
+              `\t},`,
+            ],
+          ),
+        ];
+      } else {
+        return [];
+      }
+    }).map(line => `\t${line}`),
+    '\t};',
+    '',
     ...source.getInterfaces().flatMap((intDec) => {
       const name = intDec.getName();
       const unionFields = interfaceUnionFields[name] ?? [];
@@ -306,7 +366,9 @@ export function generateProtoAndSetupFile(
       return unionFields.length > 0 || enumFields.length > 0 ? [
         `protobuf.wrappers[".compiled.${name}"] = {`,
         `\tfromObject(this: any, data: Record<string, any>) {`,
-        ...unionFields.flatMap(([fieldName, fieldTypes]) => {
+        ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
+          const dataExpression = isArray ? `data[${JSON.stringify(fieldName)}][idx]` : `data[${JSON.stringify(fieldName)}]`;
+
           const buildCaseCatch = (typeofValue: string) => {
             const optionKey = `option${fieldTypes.findIndex(
               child => getScalar(child) === typeofValue
@@ -314,7 +376,7 @@ export function generateProtoAndSetupFile(
 
             return [
               `\tcase "${typeofValue}":`,
-              `\t\tdata[${JSON.stringify(fieldName)}] = { ${optionKey}: data[${JSON.stringify(fieldName)}] };`,
+              `\t\t${dataExpression} = { ${optionKey}: ${dataExpression} };`,
               '\t\tbreak;',
               '',
             ]
@@ -324,16 +386,23 @@ export function generateProtoAndSetupFile(
           if (fieldTypes.some(child => !getScalar(child))) {
             objectCase = fieldTypes.filter(child => !getScalar(child)).length === 1 ? [
               '\tcase "object":',
-              `\t\tif (data[${JSON.stringify(fieldName)}] === null) { throw new Error("Unsupported"); }`,
-              `\t\tdata[${JSON.stringify(fieldName)}] = { option${
+              `\t\tif (${dataExpression} === null) { throw new Error("Unsupported"); }`,
+              `\t\t${dataExpression} = { option${
                 fieldTypes.findIndex(child => !getScalar(child)) + 1
-              }: data[${JSON.stringify(fieldName)}] };`,
+              }: ${dataExpression} };`,
               '\t\tbreak;',
               '',
             ] : [
               '\tcase "object":',
-              `\t\tif (data[${JSON.stringify(fieldName)}] === null) { throw new Error("Unsupported"); }`,
-              '\t\tthrow new Error("Unsupported");',
+              `\t\tif (${dataExpression} === null) { throw new Error("Unsupported"); }`,
+              `\t\t${dataExpression} = {`,
+              `\t\t\t[unionInterfaceTypeToOptionTranslator[${JSON.stringify(intDec.getName() + "." + fieldName)}][${
+                makeInterfaceFieldUnionInterfaceNameGetter(
+                  fieldUnionName ?? (intDec.getName() + "." + fieldName),
+                  dataExpression,
+                )
+              }]]: ${dataExpression},`,
+              `\t\t};`,
               '\t\tbreak;',
               '',
             ]
@@ -342,17 +411,27 @@ export function generateProtoAndSetupFile(
           }
 
           return [
-            `switch (typeof data[${JSON.stringify(fieldName)}]) {`,
-            '\tcase "undefined":',
-            '\t\tbreak;',
-            '',
-            ...objectCase,
-            ...(fieldTypes.some(child => child.isNumber()) ? buildCaseCatch('number') : []),
-            ...(fieldTypes.some(child => child.isString()) ? buildCaseCatch('string') : []),
-            ...(fieldTypes.some(child => child.isBoolean()) ? buildCaseCatch('boolean') : []),
-            '\tdefault:',
-            '\t\tthrow new Error("Unsupported");',
-            '}',
+            ...(isArray ? [
+              `if (data[${JSON.stringify(fieldName)}] !== undefined) {`,
+              `\tdata[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
+            ] : []),
+            ...[
+              `switch (typeof ${dataExpression}) {`,
+              '\tcase "undefined":',
+              '\t\tbreak;',
+              '',
+              ...objectCase,
+              ...(fieldTypes.some(child => child.isNumber()) ? buildCaseCatch('number') : []),
+              ...(fieldTypes.some(child => child.isString()) ? buildCaseCatch('string') : []),
+              ...(fieldTypes.some(child => child.isBoolean()) ? buildCaseCatch('boolean') : []),
+              '\tdefault:',
+              '\t\tthrow new Error("Unsupported");',
+              '}',
+            ].map(line => isArray ? `\t\t${line}` : line),
+            ...(isArray ? [
+              '\t});',
+              `}`,
+            ] : []),
             '',
           ].map(line => `\t\t${line}`);
         }),
