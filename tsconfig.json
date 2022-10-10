@@ -1,6 +1,6 @@
 {
+  "compileOnSave": true,
   "compilerOptions": {
-    "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "module": "commonjs",
@@ -10,7 +10,9 @@
     "strict": true,
     "target": "es2019",
     "baseUrl": "./",
+    "outDir": "dist",
     "strictNullChecks": true,
-    "useUnknownInCatchVariables": false
-  }
+    "useUnknownInCatchVariables": false,
+  },
+  "files": ["src/*", "test/*"]
 }

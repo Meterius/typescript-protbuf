@@ -1,6 +1,7 @@
 import {EnumDeclaration, ModuleKind, Project, PropertySignature, ScriptTarget, SourceFile, SyntaxKind, Type} from "ts-morph";
 import protobuf from "protobufjs";
 import path from "path";
+import {Config} from "./config";
 
 export function loadSourceFile(
   sourceFilePath: string,
@@ -17,9 +18,9 @@ export function loadSourceFile(
 
 export function generateProtoAndSetupFile(
   source: SourceFile,
-  types: string[] | undefined,
+  config: Config,
   jsonFilePath: string,
-  setupFilePath: string,
+  tsFilePath: string,
 ): [string, string] {
   const lines: string[] = ["syntax = \"proto3\";", "package compiled;", ""];
   const collectedNodes = new Set<string>();
@@ -27,6 +28,18 @@ export function generateProtoAndSetupFile(
   const interfaceEnumFields: Record<string, [string, string][]> = {};
 
   let indentLevel = 0;
+
+  function getScalar(type: Type): "string" | "number" | "boolean" | null {
+    if (type.isNumber()) {
+      return "number";
+    } else if (type.isString()) {
+      return "string";
+    } else if (type.isBoolean()) {
+      return "boolean";
+    } else {
+      return null;
+    }
+  }
 
   function withIndent(func: () => void) {
     indentLevel += 1;
@@ -38,7 +51,7 @@ export function generateProtoAndSetupFile(
     lines.push(`${'\t'.repeat(indentLevel)}${line}`);
   }
 
-  const callbacks: (() => void)[] = (types ?? [
+  const callbacks: (() => void)[] = (config.types ?? [
     ...source.getEnums().map(type => type.getSymbolOrThrow().getName()),
     ...source.getInterfaces().map(type => type.getSymbolOrThrow().getName()),
   ]).map(type => () => {
@@ -105,10 +118,13 @@ export function generateProtoAndSetupFile(
     const literalTypes: Type[] = [];
 
     types.forEach((child) => {
-      if (child.isLiteral() && !literalTypes.includes(child.getBaseTypeOfLiteralType())) {
+      if (
+        child.isLiteral()
+        && !literalTypes.includes(child.getBaseTypeOfLiteralType())
+      ) {
         literalTypes.push(child.getBaseTypeOfLiteralType());
       }
-    })
+    });
 
     return [
       ...types.filter(type => !type.isLiteral()),
@@ -189,17 +205,26 @@ export function generateProtoAndSetupFile(
           }
 
           if (memberType.isUnion()) {
+            if (
+              memberType.getUnionTypes().some(child => child.isArray())
+              && memberType.getUnionTypes().some(child => !child.isArray() && !child.isUndefined())
+            ) {
+              throw new Error(`Cannot handle union of arrays and non-arrays at ${name}.${member.getName()}`);
+            }
+
             let requiredUnionTypes;
             if (memberType.getUnionTypes().every(child => child.isArray() || child.isUndefined())) {
               requiredUnionTypes = getUnionTypes(memberType.getUnionTypes()
                 .filter(child => !child.isUndefined()).flatMap(child => child.getArrayElementTypeOrThrow()));
+
+              fieldRule = 'repeated ';
             } else {
               requiredUnionTypes = getUnionTypes(memberType.getUnionTypes().filter(child => !child.isUndefined()));
             }
 
             if (memberType.getUnionTypes().some(child => child.isUndefined())) {
               if (fieldRule === 'repeated ') {
-                throw new Error();
+                throw new Error(`Cannot handle optional array at ${name}.${member.getName()}`);
               }
 
               fieldRule = 'optional ';
@@ -244,12 +269,12 @@ export function generateProtoAndSetupFile(
   const protoContent = lines.join('\n');
 
   const schemaImportPath = path.relative(
-    path.dirname(path.join(process.cwd(), setupFilePath)),
+    path.dirname(path.join(process.cwd(), tsFilePath)),
     path.join(process.cwd(), jsonFilePath),
   );
 
   const setupLines: string[] = [
-    `import protobuf from "protobufjs";`,
+    `import protobuf from "protobufjs/light";`,
     `import schema from "./${schemaImportPath}"`,
     '',
     'export function load() {',
@@ -284,11 +309,7 @@ export function generateProtoAndSetupFile(
         ...unionFields.flatMap(([fieldName, fieldTypes]) => {
           const buildCaseCatch = (typeofValue: string) => {
             const optionKey = `option${fieldTypes.findIndex(
-              child => (
-                (child.isNumber() && typeofValue === "number")
-                || (child.isString() && typeofValue === "string")
-                || (child.isBoolean() && typeofValue === "boolean")
-              )
+              child => getScalar(child) === typeofValue
             ) + 1}`;
 
             return [
@@ -299,11 +320,33 @@ export function generateProtoAndSetupFile(
             ]
           };
 
+          let objectCase: string[];
+          if (fieldTypes.some(child => !getScalar(child))) {
+            objectCase = fieldTypes.filter(child => !getScalar(child)).length === 1 ? [
+              '\tcase "object":',
+              `\t\tif (data[${JSON.stringify(fieldName)}] === null) { throw new Error("Unsupported"); }`,
+              `\t\tdata[${JSON.stringify(fieldName)}] = { option${
+                fieldTypes.findIndex(child => !getScalar(child)) + 1
+              }: data[${JSON.stringify(fieldName)}] };`,
+              '\t\tbreak;',
+              '',
+            ] : [
+              '\tcase "object":',
+              `\t\tif (data[${JSON.stringify(fieldName)}] === null) { throw new Error("Unsupported"); }`,
+              '\t\tthrow new Error("Unsupported");',
+              '\t\tbreak;',
+              '',
+            ]
+          } else {
+            objectCase = [];
+          }
+
           return [
             `switch (typeof data[${JSON.stringify(fieldName)}]) {`,
             '\tcase "undefined":',
             '\t\tbreak;',
             '',
+            ...objectCase,
             ...(fieldTypes.some(child => child.isNumber()) ? buildCaseCatch('number') : []),
             ...(fieldTypes.some(child => child.isString()) ? buildCaseCatch('string') : []),
             ...(fieldTypes.some(child => child.isBoolean()) ? buildCaseCatch('boolean') : []),

@@ -1,16 +1,26 @@
+import path from "path";
 import {generateProtoAndSetupFile, generateProtoJsonFile, loadSourceFile} from "./index";
 import { writeFileSync } from "fs";
+import { ConfigRT } from "./config";
 
 async function main() {
   switch(process.argv[2]) {
     case "generate": {
+      const config = ConfigRT.check((await import(
+        path.join(process.cwd(), process.argv[3])
+      )).default);
+      const protoOutputFilePath = config.outputBasename + ".proto";
+      const jsonOutputFilePath = config.outputBasename + ".proto.json";
+      const tsOutputFilePath = config.outputBasename + ".proto.lib.ts";
+
       const [protoContent, tsContent] = generateProtoAndSetupFile(
-        await loadSourceFile(process.argv[3]), undefined, process.argv[5], process.argv[6],
+        await loadSourceFile(config.sourceFile), config, jsonOutputFilePath, tsOutputFilePath,
       );
-      writeFileSync(process.argv[4], protoContent);
-      const jsonContent = generateProtoJsonFile(process.argv[4]);
-      writeFileSync(process.argv[5], jsonContent);
-      writeFileSync(process.argv[6], tsContent);
+
+      writeFileSync(protoOutputFilePath, protoContent);
+      const jsonContent = generateProtoJsonFile(protoOutputFilePath);
+      writeFileSync(jsonOutputFilePath, jsonContent);
+      writeFileSync(tsOutputFilePath, tsContent);
     }
     break;
 

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test:generate": "ts-node src/bin.ts generate test/example.ts test/example.proto test/example.proto.json test/example.proto.setup.ts",
+    "test:generate": "ts-node src/bin.ts generate test/example.config.ts",
     "test:encode-decode": "ts-node test/example-encode-decode.ts",
     "test": "npm run test:generate && npm run test:encode-decode"
   },
@@ -20,6 +20,7 @@
   "homepage": "https://github.com/Meterius/typescript-protbuf#readme",
   "dependencies": {
     "protobufjs": "^7.1.2",
+    "runtypes": "^6.6.0",
     "ts-morph": "^16.0.0",
     "typescript": "^4.8.4"
   },
