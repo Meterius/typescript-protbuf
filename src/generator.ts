@@ -86,6 +86,14 @@ export function generateProtoAndSetupFile(
     }
   });
 
+  function getNumberEncoding(member?: PropertySignature) {
+    return config.numberEncoding && member ? (
+      config.numberEncoding.overrides?.[
+        member.getParentOrThrow().getSymbolOrThrow().getName() + "." + member.getName()
+      ] ?? config.numberEncoding.default
+    ) : "float";
+  }
+
   function parseType(type: Type, member?: PropertySignature): [string, string] | null {
     let rule = '';
     let effectiveType = type;
@@ -100,7 +108,7 @@ export function generateProtoAndSetupFile(
     if (scalar) {
       return [rule, {
         string: "string",
-        number: "float",
+        number: getNumberEncoding(member),
         null: NullEnum,
         boolean: "bool",
       }[scalar]];
@@ -118,10 +126,14 @@ export function generateProtoAndSetupFile(
           && member.getParent()?.isKind(SyntaxKind.InterfaceDeclaration)
         ) {
           const memberInterfaceName = member.getParentOrThrow().getSymbolOrThrow().getName();
+
           if (!(memberInterfaceName in interfaceEnumFields)) {
             interfaceEnumFields[memberInterfaceName] = [];
           }
-          interfaceEnumFields[memberInterfaceName].push([getEscapedFieldName(member), effTypeName]);
+
+          if (interfaceEnumFields[memberInterfaceName].every(item => item[0] !== getEscapedFieldName(member))) {
+            interfaceEnumFields[memberInterfaceName].push([getEscapedFieldName(member), effTypeName]);
+          }
         }
 
         callbacks.push(() => {
@@ -175,9 +187,9 @@ export function generateProtoAndSetupFile(
   }
 
   let unionId = 1;
-  function createOrCollectUnion(types: Type[], prefix: string): string {
+  function createOrCollectUnion(types: Type[], member: PropertySignature): string {
     const typeName = lookupUnion(types);
-    const unionName = typeName ?? `Union_${unionId}_${prefix}`;
+    const unionName = typeName ?? `Union_${unionId}_${member.getParentOrThrow().getSymbolOrThrow().getName()}_${getEscapedFieldName(member)}`;
 
     if (!typeName) {
       unionId += 1;
@@ -186,6 +198,8 @@ export function generateProtoAndSetupFile(
     if (!collectedNodes.has(unionName)) {
       collectedNodes.add(unionName);
 
+      // TODO: check multiple members using common union with different number encoding
+
       callbacks.push(() => {
         writeLine(`message ${unionName} {`);
 
@@ -193,7 +207,7 @@ export function generateProtoAndSetupFile(
           writeLine(`oneof options {`);
           withIndent(() => {
             types.forEach((type, idx) => {
-              const parsed = parseType(type);
+              const parsed = parseType(type, member);
               writeLine(`${parsed?.[1] ?? 'undefined'} option${idx + 1} = ${idx + 2};`);
             });
           });
@@ -340,7 +354,7 @@ export function generateProtoAndSetupFile(
 
               fieldType = createOrCollectUnion(
                 requiredUnionTypes,
-                `${name}_${getEscapedFieldName(member)}`
+                member,
               );
 
               interfaceUnionFields[name].push([

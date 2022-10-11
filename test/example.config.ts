@@ -6,6 +6,12 @@ const config: Config = {
   unionInterfaceNameGetter: {
     PlanetOrStar: (data) => `${data}.size !== undefined ? 'Star' : 'Planet'`,
   },
+  numberEncoding: {
+    default: "int32",
+    overrides: {
+      "Planet.habitable3": "float",
+    },
+  }
 }
 
 export default config;
