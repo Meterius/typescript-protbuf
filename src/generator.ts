@@ -44,8 +44,8 @@ export function generateProtoAndSetupFile(
     return `enum_typ_enum_${key}`;
   }
 
-  function getUnionToOptionTranslatorVar(key: string) {
-    return `union_opt_${key}`;
+  function getUnionFieldToOptionTranslatorVar(name: string, field: string) {
+    return `union_opt_${name}_${field}`;
   }
 
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
@@ -176,7 +176,7 @@ export function generateProtoAndSetupFile(
   }
 
   let unionId = 1;
-  function addUnion(types: Type[], prefix: string): string {
+  function createOrCollectUnion(types: Type[], prefix: string): string {
     const typeName = lookupUnion(types);
     const unionName = typeName ?? `Union_${unionId}_${prefix}`;
 
@@ -335,7 +335,7 @@ export function generateProtoAndSetupFile(
                 interfaceUnionFields[name] = [];
               }
 
-              fieldType = addUnion(
+              fieldType = createOrCollectUnion(
                 requiredUnionTypes,
                 `${name}_${getEscapedFieldName(member)}`
               );
@@ -400,6 +400,18 @@ export function generateProtoAndSetupFile(
     }
   }
 
+  function getUnionToOptionKey(type: Type) {
+    const scalarType = getScalar(type);
+
+    if (scalarType) {
+      return scalarType;
+    } else if(type.isInterface()) {
+      return type.getSymbolOrThrow().getName();
+    } else {
+      throw new Error('Unexpected Union Type');
+    }
+  }
+
   const libFileContent = [
     `import protobuf from "protobufjs/light";`,
     `import schema from "./${schemaImportPath}"`,
@@ -415,35 +427,9 @@ export function generateProtoAndSetupFile(
     '',
     ...source.getEnums().map(enumDec => `\tconst ${getEnumToTypescriptEnumTranslatorVar(enumDec.getName())} = [undefined, ${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}];`),
     '',
-    `\tconst unionInterfaceTypeToOptionTranslator: Record<string, Record<string, string>> = {`,
-    ...source.getInterfaces().flatMap(intDec => {
-      const nonOneObjectFields = (
-        interfaceUnionFields[intDec.getName()] ?? []
-      ).filter(fields => fields[1].filter(child => !getScalar(child)).length > 1);
-
-      if (nonOneObjectFields.length > 0) {
-        return [
-          ...nonOneObjectFields.flatMap(
-            ([fieldName, fieldTypes]) => [
-              `\t${JSON.stringify(intDec.getName() + "." + fieldName)}: {`,
-              ...fieldTypes.flatMap((fieldType, fieldIndex) => {
-                if (getScalar(fieldType)) {
-                  return [];
-                } else {
-                  return [
-                    `\t\t${JSON.stringify(fieldType.getSymbolOrThrow().getName())}: "option${fieldIndex + 1}",`,
-                  ];
-                }
-              }),
-              `\t},`,
-            ],
-          ),
-        ];
-      } else {
-        return [];
-      }
-    }).map(line => `\t${line}`),
-    '\t};',
+    ...Object.entries(interfaceUnionFields).flatMap(([name, unionFields]) => unionFields.map(
+      ([fieldName, types]) => `\tconst ${getUnionFieldToOptionTranslatorVar(name, fieldName)}: Record<any, string> = {${types.map((type, idx) => `${getUnionToOptionKey(type)}: "option${idx + 1}"`).join(", ")}};`,
+    )),
     '',
     ...source.getInterfaces().flatMap((intDec) => {
       const name = intDec.getName();
@@ -461,72 +447,30 @@ export function generateProtoAndSetupFile(
         `protobuf.wrappers[".compiled.${name}"] = {`,
         `\tfromObject(this: any, data: Record<string, any>) {`,
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
-          `\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldOriginalName)}];`,
+          `\t\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldOriginalName)}];`,
         ]),
         ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
           const dataExpression = isArray ? `data[${JSON.stringify(fieldName)}][idx]` : `data[${JSON.stringify(fieldName)}]`;
 
-          const buildCaseCatch = (typeofValue: string) => {
-            const optionKey = `option${fieldTypes.findIndex(
-              child => getScalar(child) === typeofValue
-            ) + 1}`;
+          const nonScalarFieldTypes = fieldTypes.filter(child => !getScalar(child));
 
-            return [
-              `\tcase "${typeofValue}":`,
-              `\t\t${dataExpression} = { ${optionKey}: ${dataExpression} };`,
-              '\t\tbreak;',
-              '',
-            ]
-          };
+          const hasInterfaceType = nonScalarFieldTypes.length > 0;
+          const hasNullType = fieldTypes.some(child => child.isNull());
 
-          const nullOptionIndex = fieldTypes.findIndex(child => getScalar(child) === "null");
+          const uniqueNonNullScalar = fieldTypes.find(child => getScalar(child) && !child.isNull());
+          let typeExpression = uniqueNonNullScalar ? JSON.stringify(getScalar(uniqueNonNullScalar)) : `typeof ${dataExpression}`;
 
-          const objectCase: string[] = [];
-          if (fieldTypes.some(child => !getScalar(child)) || nullOptionIndex !== -1) {
-            objectCase.push(
-              '\tcase "object":',
-              ...(
-                nullOptionIndex === -1 ? [
-                  `\t\tif (${dataExpression} === null) {`,
-                  `\t\t\tthrow new Error("Unsupported");`,
-                  `\t\t} else {`,
-                ] : [
-                  `\t\tif (${dataExpression} === null) {`,
-                  `\t\t\t${dataExpression} = { option${nullOptionIndex + 1}: 0 };`,
-                  `\t\t} else {`,
-                ]
-              ),
+          if (hasInterfaceType) {
+            const objectTypeExpression = nonScalarFieldTypes.length === 1 ? JSON.stringify(nonScalarFieldTypes[0].getSymbolOrThrow().getName()) : makeInterfaceFieldUnionInterfaceNameGetter(
+              fieldUnionName ?? (intDec.getName() + "." + fieldName),
+              dataExpression,
             );
 
-            const nonScalarFieldTypes = fieldTypes.filter(child => !getScalar(child));
+            typeExpression = `typeof ${dataExpression} === 'object' ? (${objectTypeExpression}) : (${typeExpression})`;
+          }
 
-            if (nonScalarFieldTypes.length === 0) {
-              objectCase.push(
-                `\t\t\tthrow new Error("Unsupported");`,
-              );
-            } else if (nonScalarFieldTypes.length === 1) {
-              objectCase.push(
-                `\t\t\t${dataExpression} = { option${
-                  fieldTypes.findIndex(child => !getScalar(child)) + 1
-                }: ${dataExpression} };`,
-              );
-            } else {
-              objectCase.push(
-                `\t\t\t${dataExpression} = {`,
-                `\t\t\t\t[unionInterfaceTypeToOptionTranslator[${JSON.stringify(intDec.getName() + "." + fieldName)}][${
-                  makeInterfaceFieldUnionInterfaceNameGetter(
-                    fieldUnionName ?? (intDec.getName() + "." + fieldName),
-                    dataExpression,
-                  )
-                }]]: ${dataExpression},`,
-                `\t\t\t};`,
-                '',
-              );
-            }
-
-            objectCase.push(`\t\t}`);
-            objectCase.push(`\t\tbreak;`);
-            objectCase.push('');
+          if (hasNullType) {
+            typeExpression = `${dataExpression} === null ? "null" : (${typeExpression})`;
           }
 
           return [
@@ -535,17 +479,7 @@ export function generateProtoAndSetupFile(
               `\tdata[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
             ] : []),
             ...[
-              `switch (typeof ${dataExpression}) {`,
-              '\tcase "undefined":',
-              '\t\tbreak;',
-              '',
-              ...objectCase,
-              ...(fieldTypes.some(child => child.isNumber()) ? buildCaseCatch('number') : []),
-              ...(fieldTypes.some(child => child.isString()) ? buildCaseCatch('string') : []),
-              ...(fieldTypes.some(child => child.isBoolean()) ? buildCaseCatch('boolean') : []),
-              '\tdefault:',
-              '\t\tthrow new Error("Unsupported");',
-              '}',
+              `${dataExpression} = { [${getUnionFieldToOptionTranslatorVar(name, fieldName)}[${typeExpression}]]: ${dataExpression} };`,
             ].map(line => isArray ? `\t\t${line}` : line),
             ...(isArray ? [
               '\t});',
@@ -607,8 +541,8 @@ export function generateProtoAndSetupFile(
           `\t\toriginal[${JSON.stringify(fieldName)}] = ${getEnumToLiteralTranslatorVar(literalKey)}[original[${JSON.stringify(fieldName)}] ?? 0];`,
         ])),
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
-          `\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
-          `\tdelete original[${JSON.stringify(fieldName)}];`,
+          `\t\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
+          `\t\tdelete original[${JSON.stringify(fieldName)}];`,
         ]),
         '',
         `\t\treturn original`,
