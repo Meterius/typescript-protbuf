@@ -5,6 +5,7 @@ import * as lib from "./example.proto.lib";
 function main() {
   const instanceData: Star = {
     size: 5,
+    __lassification5: "Constant",
     classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
     c__lassification3: "Constant",
     __lassification4: "Constant",
@@ -16,11 +17,13 @@ function main() {
       test: [null, null],
       habitable4: [{
         __lassification4: "Constant",
+        __lassification5: "Constant",
         size: 2,children:[],status:1,
       }],
       habitable3: [4],
       habitable: undefined,
       habitable2: {
+        __lassification5: "Constant",
         __lassification4: "Constant",
         size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
     },
@@ -31,9 +34,11 @@ function main() {
     instanceData.children?.push({
       classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
       __lassification4: "Constant",
+      __lassification5: "Constant",
       size: {
         classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
         __lassification4: "Constant",
+        __lassification5: "Constant",
         size2: {
           test: [],
           population: 100,

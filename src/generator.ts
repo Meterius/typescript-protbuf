@@ -219,8 +219,6 @@ export function generateProtoAndSetupFile(
 
     writeLine('}');
     writeLine();
-
-    literalEnumDefinitions[key] = values;
   }
 
   function collectEnum(name: string) {
@@ -312,7 +310,7 @@ export function generateProtoAndSetupFile(
             if (isLiteralUnionType(requiredUnionTypes)) {
               const literalKey = `Literal_${name}_${getEscapedFieldName(member)}`;
               const literalValues = [
-                undefined,
+                ...(fieldType === "optional " ? [undefined] : []),
                 ...requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []),
               ];
 
@@ -321,10 +319,15 @@ export function generateProtoAndSetupFile(
               }
 
               interfaceLiteralFields[name].push([getEscapedFieldName(member), literalKey]);
+              literalEnumDefinitions[literalKey] = literalValues;
 
-              callbacks.push(
-                () => createLiteralEnum(literalKey, literalValues),
-              );
+              if (literalValues.length > 1) {
+                callbacks.push(
+                  () => createLiteralEnum(literalKey, literalValues),
+                );
+              } else {
+                return;
+              }
 
               fieldType = literalKey;
             } else if (requiredUnionTypes.length === 1) {
@@ -487,7 +490,7 @@ export function generateProtoAndSetupFile(
         ...(nullFields.flatMap(([fieldName, isArray]) => [
           `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => 0)` : `0`)} : undefined;`,
         ])),
-        ...(literalFields.flatMap(([fieldName, literalKey]) => [
+        ...(literalFields.flatMap(([fieldName, literalKey]) => literalEnumDefinitions[literalKey].length === 1 ? [] : [
           `${fieldExpression(fieldName)} = ${getLiteralToEnumTranslatorVar(literalKey)}[${fieldExpression(fieldName)}];`,
         ])),
       ];
@@ -526,7 +529,9 @@ export function generateProtoAndSetupFile(
         ...(nullFields.flatMap(([fieldName, isArray]) => [
           `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => null)` : `null`)} : undefined;`,
         ])),
-        ...(literalFields.flatMap(([fieldName, literalKey]) => [
+        ...(literalFields.flatMap(([fieldName, literalKey]) => literalEnumDefinitions[literalKey].length === 1 ? [
+          `${fieldExpression(fieldName)} = ${JSON.stringify(literalEnumDefinitions[literalKey][0])};`,
+        ] : [
           `${fieldExpression(fieldName)} = ${getEnumToLiteralTranslatorVar(literalKey)}[${fieldExpression(fieldName)} ?? 0];`,
         ])),
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
