@@ -466,17 +466,18 @@ export function generateProtoAndSetupFile(
           }
 
           return [
+            '',
+            `if (${fieldExpression(fieldName)} !== undefined) {`,
             ...(isArray ? [
-              `if (${fieldExpression(fieldName)} !== undefined) {`,
               `\t${fieldExpression(fieldName)}.forEach((_, idx) => {`,
             ] : []),
             ...[
               `${dataExpression} = { [${getUnionFieldToOptionTranslatorVar(name, fieldName)}[${typeExpression}]]: ${dataExpression} };`,
-            ].map(line => isArray ? `\t\t${line}` : line),
+            ].map(line => isArray ? `\t\t${line}` : `\t${line}`),
             ...(isArray ? [
               '\t});',
-              `}`,
             ] : []),
+            `}`,
             '',
           ];
         }),
@@ -579,7 +580,7 @@ export function generateProtoAndSetupFile(
         contentLines.splice(
           toObjectLine - 1,
           0,
-          ...['', '/** ToObject Injection START **/', ...fromObject, '/** ToObject Injection END **/', ''].map(line => `\t\t${line}`)
+          ...['', '/** ToObject Injection START **/', ...toObject, '/** ToObject Injection END **/', ''].map(line => `\t\t${line}`)
         );
       }
     });

@@ -10,7 +10,7 @@ function main() {
     __lassification4: "Constant",
     status: 0,
     statusStr: StatusString.Paused,
-    /*size2: {
+    size2: {
       population: 100,
       notGood: null,
       test: [null, null],
@@ -23,7 +23,7 @@ function main() {
       habitable2: {
         __lassification4: "Constant",
         size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
-    },*/
+    },
     children: [],
   };
 
@@ -61,7 +61,7 @@ function main() {
     });
   };
 
-  const print = false;
+  const print = true;
 
   for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
