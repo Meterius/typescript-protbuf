@@ -28,6 +28,26 @@ export function generateProtoAndSetupFile(
     return member.getName().replaceAll('_', '').toLocaleLowerCase();
   }
 
+  function getLiteralToEnumTranslatorVar(key: string) {
+    return `lit_enum_${key}`;
+  }
+
+  function getEnumToLiteralTranslatorVar(key: string) {
+    return `enum_lit_${key}`;
+  }
+
+  function getTypescriptEnumToEnumTranslatorVar(key: string) {
+    return `typ_enum_enum_${key}`;
+  }
+
+  function getEnumToTypescriptEnumTranslatorVar(key: string) {
+    return `enum_typ_enum_${key}`;
+  }
+
+  function getUnionToOptionTranslatorVar(key: string) {
+    return `union_opt_${key}`;
+  }
+
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
     if (type.isNumber()) {
       return "number";
@@ -387,27 +407,13 @@ export function generateProtoAndSetupFile(
     'export function load() {',
     `\tconst root = protobuf.Root.fromJSON(schema);`,
     '',
-    `\tconst literalToEnumTranslator: Record<string, unknown[]> = {`,
-      ...Object.entries(literalEnumDefinitions).map(([key, values]) => `\t\t${JSON.stringify(key)}: [${values.map(value => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}],`),
-    `\t};`,
+    ...Object.entries(literalEnumDefinitions).map(([key, values]) => `\tconst ${getLiteralToEnumTranslatorVar(key)}: Record<any, number> = {${values.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`),
     '',
-    '\tconst valueToEnumTranslator: Record<string, any[]> = {',
-    ...source.getEnums().flatMap(enumDec => {
-      return [
-        `\t\t${JSON.stringify(enumDec.getName())}: [${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}],`,
-      ];
-    }),
-    '\t};',
+    ...Object.entries(literalEnumDefinitions).map(([key, values]) => `\tconst ${getEnumToLiteralTranslatorVar(key)} = [${values.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`),
     '',
-    '\tconst enumToValueTranslator: Record<string, Record<any, any>> = {',
-    ...source.getEnums().flatMap(enumDec => {
-      return [
-        `\t\t${JSON.stringify(enumDec.getName())}: {`,
-        ...enumDec.getMembers().map((mem, idx) => `\t\t\t${JSON.stringify(mem.getValue())}: ${idx},`),
-        '\t\t},',
-      ];
-    }),
-    '\t};',
+    ...source.getEnums().map(enumDec => `\tconst ${getTypescriptEnumToEnumTranslatorVar(enumDec.getName())}: Record<any, number> = {${enumDec.getMembers().flatMap((mem, idx) => [JSON.stringify(mem.getValue()) + ': ' + (idx + 1).toString()]).join(", ")}};`),
+    '',
+    ...source.getEnums().map(enumDec => `\tconst ${getEnumToTypescriptEnumTranslatorVar(enumDec.getName())} = [undefined, ${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}];`),
     '',
     `\tconst unionInterfaceTypeToOptionTranslator: Record<string, Record<string, string>> = {`,
     ...source.getInterfaces().flatMap(intDec => {
@@ -549,13 +555,13 @@ export function generateProtoAndSetupFile(
           ].map(line => `\t\t${line}`);
         }),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = enumToValueTranslator[${JSON.stringify(enumName)}][data[${JSON.stringify(fieldName)}]];`,
+          `\t\tdata[${JSON.stringify(fieldName)}] = ${getTypescriptEnumToEnumTranslatorVar(enumName)}[data[${JSON.stringify(fieldName)}]];`,
         ])),
         ...(nullFields.flatMap(([fieldName, isArray]) => [
           `\t\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `data[${JSON.stringify(fieldName)}].map(() => 0)` : `0`)} : undefined;`,
         ])),
         ...(literalFields.flatMap(([fieldName, literalKey]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = literalToEnumTranslator[${JSON.stringify(literalKey)}].indexOf(data[${JSON.stringify(fieldName)}]);`,
+          `\t\tdata[${JSON.stringify(fieldName)}] = ${getLiteralToEnumTranslatorVar(literalKey)}[data[${JSON.stringify(fieldName)}]];`,
         ])),
         '',
         `\t\treturn this.fromObject(data);`,
@@ -592,13 +598,13 @@ export function generateProtoAndSetupFile(
           ];
         })).map(line => `\t\t${line}`),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = valueToEnumTranslator[${JSON.stringify(enumName)}][original[${JSON.stringify(fieldName)}]];`,
+          `\t\toriginal[${JSON.stringify(fieldName)}] = ${getEnumToTypescriptEnumTranslatorVar(enumName)}[original[${JSON.stringify(fieldName)}] ?? 0];`,
         ])),
         ...(nullFields.flatMap(([fieldName, isArray]) => [
           `\t\toriginal[${JSON.stringify(fieldName)}] = original[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `original[${JSON.stringify(fieldName)}].map(() => null)` : `null`)} : undefined;`,
         ])),
         ...(literalFields.flatMap(([fieldName, literalKey]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = literalToEnumTranslator[${JSON.stringify(literalKey)}][original[${JSON.stringify(fieldName)}] ?? 0];`,
+          `\t\toriginal[${JSON.stringify(fieldName)}] = ${getEnumToLiteralTranslatorVar(literalKey)}[original[${JSON.stringify(fieldName)}] ?? 0];`,
         ])),
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
           `\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
