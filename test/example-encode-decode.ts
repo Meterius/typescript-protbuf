@@ -1,10 +1,8 @@
 import {clone, isEqual} from "lodash";
 import {Star, StatusString} from "./example";
-import {load} from "./example.proto.lib";
+import * as lib from "./example.proto.lib";
 
-async function main() {
-  const root = load();
-
+function main() {
   const instanceData: Star = {
     size: 5,
     classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -12,7 +10,7 @@ async function main() {
     __lassification4: "Constant",
     status: 0,
     statusStr: StatusString.Paused,
-    size2: {
+    /*size2: {
       population: 100,
       notGood: null,
       test: [null, null],
@@ -25,7 +23,7 @@ async function main() {
       habitable2: {
         __lassification4: "Constant",
         size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
-    },
+    },*/
     children: [],
   };
 
@@ -44,7 +42,7 @@ async function main() {
           habitable: undefined,
           habitable2: undefined,
         },
-        size: Math.random(),
+        size: 4,
         statusStr: StatusString.Running,
         status: 1,
         children: [],
@@ -63,7 +61,7 @@ async function main() {
     });
   };
 
-  const print = true;
+  const print = false;
 
   for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
@@ -73,40 +71,51 @@ async function main() {
     console.log(JSON.stringify(instanceData, undefined, " "));
   }
 
-  const Star = root.lookupType("Star");
-  const instance = Star.fromObject(clone(instanceData));
+  let instanceDataClone = clone(instanceData);
 
-  const encodingProtoStart = Date.now();
-  const protoEncoding = Star.encode(instance).finish();
-  const encodingProtoEnd = Date.now();
-
-  const decodingProtoStart = Date.now();
-  const protoDecoding = Star.decode(protoEncoding);
-  const decodingProtoEnd = Date.now();
-
-  if (print) {
-    console.log(JSON.stringify(Star.toObject(protoDecoding, { defaults: true }), undefined, " "));
-    console.log("Equals", isEqual(Star.toObject(protoDecoding, { defaults: true }), instanceData));
+  const timeit = (name: string, func: () => void) => {
+    const start = Date.now();
+    func();
+    const end = Date.now();
+    console.log(`${name} took ${((end-start)/1000).toFixed(2)} seconds`);
   }
 
-  const encodingJsonStart = Date.now();
-  const jsonEncoding = JSON.stringify(instanceData);
-  const encodingJsonEnd = Date.now();
+  let instance: any;
+  timeit("FromObject", () => {
+    instance = lib.Star.fromObject(instanceDataClone);
+  });
 
-  const decodingJsonStart = Date.now();
-  const jsonDecoding = JSON.parse(jsonEncoding);
-  const decodingJsonEnd = Date.now();
+  let protoEncoding: any;
+  timeit("Encoding", () => {
+    protoEncoding = lib.Star.encode(instance).finish();
+  });
 
-  console.log(`Proto Encoding took ${((encodingProtoEnd-encodingProtoStart)/1000).toFixed(2)} seconds`);
-  console.log(`Proto Decoding took ${((decodingProtoEnd-decodingProtoStart)/1000).toFixed(2)} seconds`);
+  let protoDecoding: any;
+  timeit("Decoding", () => {
+    protoDecoding = lib.Star.decode(protoEncoding);
+  });
+
+  let decoded: any;
+  timeit("ToObject", () => {
+    decoded = lib.Star.toObject(protoDecoding, { defaults: true });
+  });
+
+  if (print) {
+    console.log(JSON.stringify(decoded, undefined, " "));
+    console.log("Equals", isEqual(decoded, instanceData));
+  }
+
+  let encodedJson: any;
+  timeit("JSON Encoding", () => {
+    encodedJson = JSON.stringify(instanceData);
+  });
+
+  timeit("JSON Decoding", () => {
+    JSON.parse(encodedJson);
+  });
+
   console.log(`Proto Encoding has size ${protoEncoding.byteLength} bytes`);
-  console.log();
-  console.log(`JSON Encoding took ${((encodingJsonEnd-encodingJsonStart)/1000).toFixed(2)} seconds`);
-  console.log(`JSON Decoding took ${((decodingJsonEnd-decodingJsonStart)/1000).toFixed(2)} seconds`);
-  console.log(`JSON Encoding has size ${Buffer.from(jsonEncoding).byteLength} bytes`);
+  console.log(`JSON Encoding has size ${Buffer.from(encodedJson).byteLength} bytes`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-})
+main();

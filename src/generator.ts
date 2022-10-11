@@ -1,18 +1,17 @@
-import {PropertySignature, SourceFile, SyntaxKind, Type} from "ts-morph";
+import {InterfaceDeclaration, PropertySignature, SourceFile, SyntaxKind, Type} from "ts-morph";
 import {Config} from "./config";
 import path from "path";
 
 export function generateProtoAndSetupFile(
   source: SourceFile,
   config: Config,
-  jsonFilePath: string,
-  tsFilePath: string,
 ): {
   protoFileContent: string;
-  libFileContent: string;
+  staticInjector: (content: string) => string;
 } {
-  const lines: string[] = ["syntax = \"proto3\";", "package compiled;", ""];
+  const lines: string[] = ["syntax = \"proto3\";", ""];
   const collectedNodes = new Set<string>();
+  const collectedInterfaces: string[] = [];
   const interfaceUnionFields: Record<string, [string, Type[], string | null, boolean][]> = {};
   const interfaceEnumFields: Record<string, [string, string][]> = {};
   const interfaceNullFields: Record<string, [string, boolean][]> = {};
@@ -248,6 +247,7 @@ export function generateProtoAndSetupFile(
 
     if (!collectedNodes.has(name)) {
       collectedNodes.add(name);
+      collectedInterfaces.push(name);
 
       const memberEscapedNames: string[] = [];
       node.getChildrenOfKind(SyntaxKind.PropertySignature).forEach((member) => {
@@ -385,53 +385,49 @@ export function generateProtoAndSetupFile(
 
   const protoFileContent = lines.join('\n');
 
-  const schemaImportPath = path.relative(
-    path.dirname(path.join(process.cwd(), tsFilePath)),
-    path.join(process.cwd(), jsonFilePath),
-  );
+  const staticInjector = (content: string) => {
+    function makeInterfaceFieldUnionInterfaceNameGetter(key: string, dataExpression: string) {
+      const makeGetter = config.unionInterfaceNameGetter?.[key];
 
-  function makeInterfaceFieldUnionInterfaceNameGetter(key: string, dataExpression: string) {
-    const makeGetter = config.unionInterfaceNameGetter?.[key];
-
-    if (!makeGetter) {
-      throw new Error(`Config is missing union interface name getter for entry ${key}`);
-    } else {
-      return makeGetter(dataExpression);
+      if (!makeGetter) {
+        throw new Error(`Config is missing union interface name getter for entry ${key}`);
+      } else {
+        return makeGetter(dataExpression);
+      }
     }
-  }
 
-  function getUnionToOptionKey(type: Type) {
-    const scalarType = getScalar(type);
+    function getUnionToOptionKey(type: Type) {
+      const scalarType = getScalar(type);
 
-    if (scalarType) {
-      return scalarType;
-    } else if(type.isInterface()) {
-      return type.getSymbolOrThrow().getName();
-    } else {
-      throw new Error('Unexpected Union Type');
+      if (scalarType) {
+        return scalarType;
+      } else if (type.isInterface()) {
+        return type.getSymbolOrThrow().getName();
+      } else {
+        throw new Error('Unexpected Union Type');
+      }
     }
-  }
 
-  const libFileContent = [
-    `import protobuf from "protobufjs/light";`,
-    `import schema from "./${schemaImportPath}"`,
-    '',
-    'export function load() {',
-    `\tconst root = protobuf.Root.fromJSON(schema);`,
-    '',
-    ...Object.entries(literalEnumDefinitions).map(([key, values]) => `\tconst ${getLiteralToEnumTranslatorVar(key)}: Record<any, number> = {${values.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`),
-    '',
-    ...Object.entries(literalEnumDefinitions).map(([key, values]) => `\tconst ${getEnumToLiteralTranslatorVar(key)} = [${values.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`),
-    '',
-    ...source.getEnums().map(enumDec => `\tconst ${getTypescriptEnumToEnumTranslatorVar(enumDec.getName())}: Record<any, number> = {${enumDec.getMembers().flatMap((mem, idx) => [JSON.stringify(mem.getValue()) + ': ' + (idx + 1).toString()]).join(", ")}};`),
-    '',
-    ...source.getEnums().map(enumDec => `\tconst ${getEnumToTypescriptEnumTranslatorVar(enumDec.getName())} = [undefined, ${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}];`),
-    '',
-    ...Object.entries(interfaceUnionFields).flatMap(([name, unionFields]) => unionFields.map(
-      ([fieldName, types]) => `\tconst ${getUnionFieldToOptionTranslatorVar(name, fieldName)}: Record<any, string> = {${types.map((type, idx) => `${getUnionToOptionKey(type)}: "option${idx + 1}"`).join(", ")}};`,
-    )),
-    '',
-    ...source.getInterfaces().flatMap((intDec) => {
+    function getRootInjection() {
+      return [
+        ...Object.entries(literalEnumDefinitions).map(([key, values]) => `const ${getLiteralToEnumTranslatorVar(key)} = {${values.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`),
+        '',
+        ...Object.entries(literalEnumDefinitions).map(([key, values]) => `const ${getEnumToLiteralTranslatorVar(key)} = [${values.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`),
+        '',
+        ...source.getEnums().map(enumDec => `const ${getTypescriptEnumToEnumTranslatorVar(enumDec.getName())} = {${enumDec.getMembers().flatMap((mem, idx) => [JSON.stringify(mem.getValue()) + ': ' + (idx + 1).toString()]).join(", ")}};`),
+        '',
+        ...source.getEnums().map(enumDec => `const ${getEnumToTypescriptEnumTranslatorVar(enumDec.getName())} = [undefined, ${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}];`),
+        '',
+        ...Object.entries(interfaceUnionFields).flatMap(([name, unionFields]) => unionFields.map(
+          ([fieldName, types]) => `const ${getUnionFieldToOptionTranslatorVar(name, fieldName)} = {${types.map((type, idx) => `${getUnionToOptionKey(type)}: "option${idx + 1}"`).join(", ")}};`,
+        )),
+        '',
+      ]
+    }
+
+    function getInterfaceInjections(
+      intDec: InterfaceDeclaration,
+    ): { fromObject: string[]; toObject: string[]; } {
       const name = intDec.getName();
       const unionFields = interfaceUnionFields[name] ?? [];
       const enumFields = interfaceEnumFields[name] ?? [];
@@ -439,18 +435,14 @@ export function generateProtoAndSetupFile(
       const escapedFields = interfaceEscapedFieldTranslation[name] ?? [];
       const literalFields = interfaceLiteralFields[name] ?? [];
 
-      return (
-        unionFields.length > 0 || enumFields.length > 0
-        || nullFields.length > 0 || literalFields.length > 0
-        || escapedFields.length > 0
-      ) ? [
-        `protobuf.wrappers[".compiled.${name}"] = {`,
-        `\tfromObject(this: any, data: Record<string, any>) {`,
+      const fieldExpression = (fieldName: string) => `object[${JSON.stringify(fieldName)}]`;
+
+      const fromObject = [
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldOriginalName)}];`,
+          `${fieldExpression(fieldName)} = ${fieldExpression(fieldOriginalName)};`,
         ]),
         ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
-          const dataExpression = isArray ? `data[${JSON.stringify(fieldName)}][idx]` : `data[${JSON.stringify(fieldName)}]`;
+          const dataExpression = fieldExpression(fieldName) + (isArray ? "[idx]" : "");
 
           const nonScalarFieldTypes = fieldTypes.filter(child => !getScalar(child));
 
@@ -475,8 +467,8 @@ export function generateProtoAndSetupFile(
 
           return [
             ...(isArray ? [
-              `if (data[${JSON.stringify(fieldName)}] !== undefined) {`,
-              `\tdata[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
+              `if (${fieldExpression(fieldName)} !== undefined) {`,
+              `\t${fieldExpression(fieldName)}.forEach((_, idx) => {`,
             ] : []),
             ...[
               `${dataExpression} = { [${getUnionFieldToOptionTranslatorVar(name, fieldName)}[${typeExpression}]]: ${dataExpression} };`,
@@ -486,26 +478,22 @@ export function generateProtoAndSetupFile(
               `}`,
             ] : []),
             '',
-          ].map(line => `\t\t${line}`);
+          ];
         }),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = ${getTypescriptEnumToEnumTranslatorVar(enumName)}[data[${JSON.stringify(fieldName)}]];`,
+          `${fieldExpression(fieldName)} = ${getTypescriptEnumToEnumTranslatorVar(enumName)}[${fieldExpression(fieldName)}];`,
         ])),
         ...(nullFields.flatMap(([fieldName, isArray]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = data[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `data[${JSON.stringify(fieldName)}].map(() => 0)` : `0`)} : undefined;`,
+          `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => 0)` : `0`)} : undefined;`,
         ])),
         ...(literalFields.flatMap(([fieldName, literalKey]) => [
-          `\t\tdata[${JSON.stringify(fieldName)}] = ${getLiteralToEnumTranslatorVar(literalKey)}[data[${JSON.stringify(fieldName)}]];`,
+          `${fieldExpression(fieldName)} = ${getLiteralToEnumTranslatorVar(literalKey)}[${fieldExpression(fieldName)}];`,
         ])),
-        '',
-        `\t\treturn this.fromObject(data);`,
-        `\t},`,
+      ];
 
-        `\ttoObject(this: any, data: Record<string, any>, options: Record<string, any> | undefined) {`,
-        `\t\tconst original = this.toObject(data, { ...options, defaults: true });`,
-        '',
+      const toObject = [
         ...(unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
-          const dataExpression = isArray ? `original[${JSON.stringify(fieldName)}][idx]` : `original[${JSON.stringify(fieldName)}]`;
+          const dataExpression = fieldExpression(fieldName) + (isArray ? "[idx]" : "");
           const nullOptionIndex = fieldTypes.findIndex(child => getScalar(child) === "null");
 
           const assignmentCollectExpression = fieldTypes.flatMap(
@@ -516,8 +504,8 @@ export function generateProtoAndSetupFile(
           ) : assignmentCollectExpression;
 
           return isArray ? [
-            `if (original[${JSON.stringify(fieldName)}] !== undefined) {`,
-            `\toriginal[${JSON.stringify(fieldName)}].forEach((_: any, idx: number) => {`,
+            `if (${fieldExpression(fieldName)} !== undefined) {`,
+            `\t${fieldExpression(fieldName)}.forEach((_, idx) => {`,
             `\t\tif (${dataExpression} !== undefined) {`,
             `\t\t\t${dataExpression} = ${assignmentLineExpression};`,
             `\t\t}`,
@@ -530,35 +518,77 @@ export function generateProtoAndSetupFile(
             `}`,
             '',
           ];
-        })).map(line => `\t\t${line}`),
+        })),
         ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = ${getEnumToTypescriptEnumTranslatorVar(enumName)}[original[${JSON.stringify(fieldName)}] ?? 0];`,
+          `${fieldExpression(fieldName)} = ${getEnumToTypescriptEnumTranslatorVar(enumName)}[${fieldExpression(fieldName)} ?? 0];`,
         ])),
         ...(nullFields.flatMap(([fieldName, isArray]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = original[${JSON.stringify(fieldName)}] !== undefined ? ${(isArray ? `original[${JSON.stringify(fieldName)}].map(() => null)` : `null`)} : undefined;`,
+          `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => null)` : `null`)} : undefined;`,
         ])),
         ...(literalFields.flatMap(([fieldName, literalKey]) => [
-          `\t\toriginal[${JSON.stringify(fieldName)}] = ${getEnumToLiteralTranslatorVar(literalKey)}[original[${JSON.stringify(fieldName)}] ?? 0];`,
+          `${fieldExpression(fieldName)} = ${getEnumToLiteralTranslatorVar(literalKey)}[${fieldExpression(fieldName)} ?? 0];`,
         ])),
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
-          `\t\toriginal[${JSON.stringify(fieldOriginalName)}] = original[${JSON.stringify(fieldName)}];`,
-          `\t\tdelete original[${JSON.stringify(fieldName)}];`,
+          `${fieldExpression(fieldOriginalName)} = ${fieldExpression(fieldName)};`,
+          `delete ${fieldExpression(fieldName)};`,
         ]),
-        '',
-        `\t\treturn original`,
-        `\t},`,
-        `};`,
-        '',
-      ].map(line => `\t${line}`) : [];
-    }),
-    '',
-    '\treturn root;',
-    '}',
-    '',
-  ].join('\n');
+      ];
+
+      return {
+        fromObject, toObject,
+      };
+    }
+
+    const contentLines = content.split("\n");
+
+    const compiledFunctionRootLine = contentLines.findIndex(
+      line => line.startsWith(`"use strict";`),
+    );
+
+    if (compiledFunctionRootLine === -1) {
+      throw new Error('Failed to compile');
+    } else {
+      contentLines.splice(compiledFunctionRootLine + 2, 0, ...getRootInjection());
+    }
+
+    collectedInterfaces.forEach((name) => {
+      const intDec = source.getInterfaceOrThrow(name);
+      const { fromObject, toObject } = getInterfaceInjections(intDec);
+
+      const fromObjectLine = contentLines.findIndex(line => line.trim() === `${name}.fromObject = function fromObject(object) {`);
+
+      if (fromObjectLine === -1) {
+        throw new Error('Failed to compile');
+      } else {
+        contentLines.splice(
+          fromObjectLine + 3,
+          0,
+          ...['', '/** FromObject Injection START **/', ...fromObject, '/** FromObject Injection END **/', ''].map(line => `\t\t${line}`)
+        );
+      }
+
+      const toObjectLine = contentLines.findIndex(
+        (line, idx) => line.trim() === "};" && contentLines.some(
+          (priorLine, jdx) => jdx < idx && priorLine.trim() === `${name}.toObject = function toObject(message, options) {`
+        ),
+      );
+
+      if (toObjectLine === -1) {
+        throw new Error('Failed to compile');
+      } else {
+        contentLines.splice(
+          toObjectLine - 1,
+          0,
+          ...['', '/** ToObject Injection START **/', ...fromObject, '/** ToObject Injection END **/', ''].map(line => `\t\t${line}`)
+        );
+      }
+    });
+
+    return contentLines.join("\n");
+  }
 
   return {
-    libFileContent,
+    staticInjector,
     protoFileContent,
   };
 }

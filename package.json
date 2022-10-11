@@ -1,6 +1,6 @@
 {
   "name": "@meterius/typescript-protobuf",
-  "version": "1.0.0-alpha.8",
+  "version": "1.0.0-alpha.9",
   "description": "Automatically generates proto, JSON proto file, and code to transmit typescript coded data using protobufjs",
   "main": "src/",
   "files": [
@@ -28,6 +28,7 @@
   "homepage": "https://github.com/Meterius/typescript-protbuf#readme",
   "dependencies": {
     "protobufjs": "^7.1.2",
+    "protobufjs-cli": "^1.0.2",
     "runtypes": "^6.6.0",
     "ts-morph": "^16.0.0",
     "ts-node": "^10.9.1",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@types/lodash": "^4.14.186",
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "ts-node-dev": "^2.0.0"
   }
 }

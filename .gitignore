@@ -1,5 +1,7 @@
 dist
 node_modules
 example.proto.lib.ts
+example.proto.lib.js
+example.proto.lib.d.ts
 example.proto.json
 example.proto
