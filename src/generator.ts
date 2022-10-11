@@ -443,6 +443,7 @@ export function generateProtoAndSetupFile(
       const fromObject = [
         ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
           `${fieldExpression(fieldName)} = ${fieldExpression(fieldOriginalName)};`,
+          `delete ${fieldExpression(fieldOriginalName)};`,
         ]),
         ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
           const dataExpression = fieldExpression(fieldName) + (isArray ? "[idx]" : "");
