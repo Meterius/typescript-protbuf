@@ -1,6 +1,6 @@
 {
   "name": "@meterius/typescript-protobuf",
-  "version": "1.0.0-alpha.11",
+  "version": "1.0.0-alpha.12",
   "description": "Automatically generates proto, JSON proto file, and code to transmit typescript coded data using protobufjs",
   "main": "src/",
   "files": [
