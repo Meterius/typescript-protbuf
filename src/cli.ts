@@ -1,7 +1,7 @@
 import path from "path";
-import { loadSourceFile } from "./index";
+import {getRequiredProtocolBufferModules, loadSourceFile} from "./index";
 import { main as pbjsMain } from "protobufjs-cli/pbjs";
-import { writeFileSync, readFileSync } from "fs";
+import { writeFileSync, readFileSync, writeFile } from "fs";
 import { ConfigRT } from "./config";
 import { generateProtoAndLibInjection } from "./generator";
 // @ts-ignore
@@ -27,22 +27,49 @@ export async function main() {
 
       writeFileSync(protoOutputFilePath, protoFileContent);
 
-      writeFileSync(libPbOutputFilePath, protobuf.toJS(null, {
-        filename: protoOutputFilePath,
-        resolveImport: (filePath: string) => readFileSync(filePath),
-      }));
+      await Promise.all([...getRequiredProtocolBufferModules(config).map(module => (async () => {
+          switch(module) {
+            default:
+              break;
 
-      await (new Promise<void>((resolve, reject) => {
-        pbjsMain(["-t", "static-module", "--no-create", "-w", "commonjs", "-o", libPbjsOutputFilePath, protoOutputFilePath], (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
+            case "protobufjs":
+              await (new Promise<void>((resolve, reject) => {
+                pbjsMain(["-t", "static-module", "--no-create", "-w", "commonjs", "-o", libPbjsOutputFilePath, protoOutputFilePath], (err) => {
+                  if (err) {
+                    reject(err);
+                  } else {
+                    resolve();
+                  }
+                });
+              }));
+              break;
+
+            case "protocol-buffers":
+              await (new Promise<void>((resolve, reject) => {
+                writeFile(libPbOutputFilePath, protobuf.toJS(null, {
+                  filename: protoOutputFilePath,
+                  resolveImport: (filePath: string) => readFileSync(filePath),
+                }), (err) => {
+                  if (err) {
+                    reject(err);
+                  } else {
+                    resolve();
+                  }
+                });
+              }));
+              break;
           }
-        });
-      }));
-
-      writeFileSync(libOutputFilePath, libFileContent);
+        })()),
+        new Promise<void>((resolve, reject) => {
+          writeFile(libOutputFilePath, libFileContent, (err) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        }),
+      ]);
     }
     break;
 

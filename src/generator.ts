@@ -1,5 +1,5 @@
 import {PropertySignature, SourceFile, SyntaxKind, Type} from "ts-morph";
-import {Config} from "./config";
+import {Config, defaultDecodingModule, defaultEncodingModule, getRequiredProtocolBufferModules} from "./config";
 import path from "path";
 
 export function generateProtoAndLibInjection(
@@ -419,8 +419,8 @@ export function generateProtoAndLibInjection(
     "protocol-buffers": "lib_pb",
   };
 
-  const encoderModule = config.encodingModule ?? "protocol-buffers";
-  const decoderModule = config.decodingModule ?? "protocol-buffers";
+  const encoderModule = config.encodingModule ?? defaultEncodingModule;
+  const decoderModule = config.decodingModule ?? defaultDecodingModule;
 
   function getDecoderEncoderFunctionExpression(type: "encode" | "decode", complexName: string, dataExpression: string) {
     const module = {
@@ -448,8 +448,14 @@ export function generateProtoAndLibInjection(
   ];
 
   const libFileContent = [
-    `const lib_pbjs = require(${JSON.stringify("./" + path.relative(path.dirname(libFilePath), pbjsLibFilePath))});`,
-    `const lib_pb = require(${JSON.stringify("./" + path.relative(path.dirname(libFilePath), pbLibFilePath))});`,
+    ...getRequiredProtocolBufferModules(config).flatMap((module) => [
+      `const lib_${{ "protocol-buffers": "pb", "protobufjs": "pbjs" }[module]} = require(${
+        JSON.stringify("./" + path.relative(path.dirname(libFilePath), {
+          "protocol-buffers": pbLibFilePath, 
+          "protobufjs": pbjsLibFilePath,
+        }[module]))
+      });`
+    ]),
 
     '',
 

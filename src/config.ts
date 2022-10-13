@@ -1,8 +1,10 @@
 import * as RT from "runtypes";
 
-const NumberEncoding = RT.Union(RT.Literal("int32"), RT.Literal("float"));
+const NumberEncodingRT = RT.Union(RT.Literal("int32"), RT.Literal("float"));
 
-const PbModule = RT.Union(RT.Literal("protocol-buffers"), RT.Literal("protobufjs"));
+const PbModuleRT = RT.Union(RT.Literal("protocol-buffers"), RT.Literal("protobufjs"));
+
+export type PbModule = RT.Static<typeof PbModuleRT>;
 
 export const ConfigRT = RT.Record({
   sourceFile: RT.String,
@@ -10,12 +12,21 @@ export const ConfigRT = RT.Record({
   types: RT.Array(RT.String).optional(),
   unionInterfaceNameGetter: RT.Dictionary(RT.Function).optional(),
   numberEncoding: RT.Record({
-    default: NumberEncoding,
-    overrides: RT.Dictionary(NumberEncoding, RT.String).optional(),
+    default: NumberEncodingRT,
+    overrides: RT.Dictionary(NumberEncodingRT, RT.String).optional(),
   }).optional(),
-  encodingModule: PbModule.optional(),
-  decodingModule: PbModule.optional(),
+  encodingModule: PbModuleRT.optional(),
+  decodingModule: PbModuleRT.optional(),
 });
+
+export const defaultEncodingModule: PbModule = "protocol-buffers";
+export const defaultDecodingModule: PbModule = "protocol-buffers";
 
 export type Config = RT.Static<typeof ConfigRT>;
 
+export function getRequiredProtocolBufferModules(config: Config): PbModule[] {
+  return [...new Set([
+    config.encodingModule ?? defaultEncodingModule,
+    config.decodingModule ?? defaultDecodingModule,
+  ])];
+}
