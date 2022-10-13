@@ -20,7 +20,7 @@ export async function main() {
       const libDsOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.lib.d.ts");
 
       const {
-        protoFileContent, libFileContent,
+        protoFileContent, libFileContent, libDeclarationFileContent,
       } = generateProtoAndLibInjection(
         await loadSourceFile(config.sourceFile), config, libOutputFilePath, libPbjsOutputFilePath, libPbOutputFilePath,
       );
@@ -62,6 +62,15 @@ export async function main() {
         })()),
         new Promise<void>((resolve, reject) => {
           writeFile(libOutputFilePath, libFileContent, (err) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        }),
+        new Promise<void>((resolve, reject) => {
+          writeFile(libDsOutputFilePath, libDeclarationFileContent, (err) => {
             if (err) {
               reject(err);
             } else {

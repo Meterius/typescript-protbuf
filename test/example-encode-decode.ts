@@ -1,6 +1,5 @@
 import {cloneDeep, isEqual} from "lodash";
 import {Star, StatusString} from "./example";
-// @ts-ignore
 import * as lib from "./example.proto.lib";
 
 function main() {

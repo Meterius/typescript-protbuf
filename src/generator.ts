@@ -11,6 +11,7 @@ export function generateProtoAndLibInjection(
 ): {
   protoFileContent: string;
   libFileContent: string;
+  libDeclarationFileContent: string;
 } {
   const lines: string[] = ["syntax = \"proto3\";", ""];
   const collectedNodes = new Set<string>();
@@ -664,10 +665,29 @@ export function generateProtoAndLibInjection(
 
       '',
     ]
-  ].join('\n');
+  ].join("\n");
+
+  const libDeclarationFileContent = [
+    ...complexObjects.flatMap((complexName) => [
+      `export interface ${complexName} {`,
+      `\ttranslateTo(object: any): any;`,
+      `\ttranslateFrom(data: any): any;`,
+      ...(complexName in enumDefinitions ? [] : [
+        ``,
+        `\tencode(object: any): Buffer | UInt8Array;`,
+        `\tdecode(buffer: Buffer | UInt8Array): any;`,
+      ]),
+      `}`,
+      ``,
+    ]),
+    ...complexObjects.flatMap((complexName) => [
+      `export const ${complexName}: ${complexName};`
+    ]),
+  ].join("\n");
 
   return {
     libFileContent,
     protoFileContent,
+    libDeclarationFileContent,
   };
 }
