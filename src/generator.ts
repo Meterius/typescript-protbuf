@@ -42,18 +42,6 @@ export function generateProtoAndLibInjection(
     return member.getName().replaceAll('_', '').toLocaleLowerCase();
   }
 
-  function getValueToEnumTranslatorVar(key: string) {
-    return `val_enum_${key}`;
-  }
-
-  function getEnumToValueTranslatorVar(key: string) {
-    return `enum_val_${key}`;
-  }
-
-  function getUnionToOptionTranslatorVar(key: string) {
-    return `translate_union_opt_${key}`;
-  }
-
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
     if (type.isNumber()) {
       return "number";
@@ -394,11 +382,22 @@ export function generateProtoAndLibInjection(
     ]
   };
 
-  const makeIfElseChain = (items: [string, string[]][], elseContent?: string[]) => {
+  function makeIfElseChain(items: [string, string[]][], elseContent?: string[]) {
     return (items.map(item => `if (${item[0]}) {\n${item[1].map(line => `\t${line}`).join("\n")}\n}`).join(" else ") + (
       elseContent ? `else {\n` + elseContent.map(line => `\t${line}`).join("\n") + "}" : ''
     )).split("\n");
-  };
+  }
+
+  function makeSwitch(conditionExpression: string, items: [string, string[]][]) {
+    return [
+      `switch (${conditionExpression}) {`,
+      ...items.flatMap(item => [
+        `case ${item[0]}:`,
+        ...item[1].map(line => `\t${line}`),
+      ]).map(line => `\t${line}`),
+      `}`,
+    ]
+  }
 
   function makeUnionInterfaceNameGetter(key: string, dataExpression: string) {
     const makeGetter = config.unionInterfaceNameGetter?.[key];
@@ -466,30 +465,17 @@ export function generateProtoAndLibInjection(
     '',
 
     ...[
-      '/** Translation Variables **/',
-
-      '',
-
-      ...Object.entries(enumDefinitions).flatMap(([enumName, enumValues]) => [
-        `const ${getValueToEnumTranslatorVar(enumName)} = {${enumValues.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`,
-        `const ${getEnumToValueTranslatorVar(enumName)} = [${enumValues.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`,
-      ]),
-
-      ...Object.entries(unionDefinitions).flatMap(([unionName, unionTypes]) => [
-        `const ${getUnionToOptionTranslatorVar(unionName)} = {`,
-        ...unionTypes.map((type, idx) => `\t${getUnionToOptionKey(type)}: (object) => ({ "option${idx + 1}": ${makeObjectTranslator('object', type, 'translateTo')} }),`),
-        '};',
-      ]),
-
-      '',
-    ],
-    ...[
       '/** translateTo Converters **/',
 
       '',
 
       ...Object.entries(enumDefinitions).flatMap(([enumName, enumValues]) => makeFunctionDecl(enumName, "translateTo", 'object', [
-        enumValues.length === 1 ? 'return undefined;' : `return ${getValueToEnumTranslatorVar(enumName)}[object];`,
+        ...makeSwitch('object', enumValues.map((value, idx) => [
+          JSON.stringify(value),
+          [
+            `return ${idx}`,
+          ],
+        ])),
       ])),
 
       '',
@@ -538,7 +524,17 @@ export function generateProtoAndLibInjection(
         }
 
         return [
-          `return ${getUnionToOptionTranslatorVar(unionName)}[${typeExpression}](object);`
+          'const data = {};',
+          '',
+          ...makeSwitch(typeExpression, unionTypes.map((child, idx) => [
+            `"${getScalar(child) ?? child.getSymbolOrThrow().getName()}"`,
+            [
+              `data.object${idx + 1} = ${getScalar(child) === null ? child.getSymbolOrThrow().getName() + ".translateTo(object)" : "object"};`,
+              'break;',
+            ],
+          ])),
+          '',
+          `return data`,
         ];
       })())),
 
@@ -548,11 +544,14 @@ export function generateProtoAndLibInjection(
       '/** TranslateFrom Converters **/',
       '',
 
-      ...Object.entries(enumDefinitions).flatMap(([enumName]) => makeFunctionDecl(enumName, "translateFrom", 'object', [
-        `return ${getEnumToValueTranslatorVar(enumName)}[object || 0];`,
+      ...Object.entries(enumDefinitions).flatMap(([enumName, enumValues]) => makeFunctionDecl(enumName, "translateFrom", 'object', [
+        ...makeSwitch("object", enumValues.map((value, idx) => [
+          JSON.stringify(idx),
+          [
+            `return ${JSON.stringify(value)};`,
+          ],
+        ]))
       ])),
-
-      '',
 
       '',
 
@@ -583,6 +582,8 @@ export function generateProtoAndLibInjection(
         '',
         'return object;',
       ])),
+
+      '',
 
       ...Object.entries(unionDefinitions).flatMap(([unionName, unionTypes]) => makeFunctionDecl(unionName, "translateFrom", 'object', [
         ...makeIfElseChain(

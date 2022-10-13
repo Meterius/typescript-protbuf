@@ -1,4 +1,4 @@
-import {clone, isEqual} from "lodash";
+import {cloneDeep, isEqual} from "lodash";
 import {Star, StatusString} from "./example";
 // @ts-ignore
 import * as lib from "./example.proto.lib";
@@ -77,8 +77,8 @@ function main() {
     console.log(JSON.stringify(instanceData, undefined, " "));
   }
 
-  let instanceDataClone = clone(instanceData);
-  let instanceDataClone2 = clone(instanceData);
+  let instanceDataClone = cloneDeep(instanceData);
+  let instanceDataClone2 = cloneDeep(instanceData);
 
   const timeit = (name: string, func: () => void) => {
     const start = Date.now();

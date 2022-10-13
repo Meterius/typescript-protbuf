@@ -26,9 +26,4 @@ export function loadSourceFile(
   return project.addSourceFileAtPath(sourceFilePath);
 }
 
-export function generateProtoJsonFile(protoFilePath: string): string {
-  const reflection = protobuf.loadSync(protoFilePath);
-  return JSON.stringify(reflection.toJSON(), undefined, " ");
-}
-
 export * from "./config";
