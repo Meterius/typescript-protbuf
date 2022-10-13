@@ -29,6 +29,8 @@
   "dependencies": {
     "protobufjs": "^7.1.2",
     "protobufjs-cli": "^1.0.2",
+    "protocol-buffers": "^5.0.0",
+    "protocol-buffers-encodings": "^1.2.0",
     "runtypes": "^6.6.0",
     "ts-morph": "^16.0.0",
     "ts-node": "^10.9.1",

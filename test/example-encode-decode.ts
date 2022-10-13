@@ -1,5 +1,6 @@
 import {clone, isEqual} from "lodash";
 import {Star, StatusString} from "./example";
+// @ts-ignore
 import * as lib from "./example.proto.lib";
 
 function main() {
@@ -66,7 +67,7 @@ function main() {
     });
   };
 
-  const print = true;
+  const print = false;
 
   for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
@@ -77,6 +78,7 @@ function main() {
   }
 
   let instanceDataClone = clone(instanceData);
+  let instanceDataClone2 = clone(instanceData);
 
   const timeit = (name: string, func: () => void) => {
     const start = Date.now();
@@ -85,29 +87,28 @@ function main() {
     console.log(`${name} took ${((end-start)/1000).toFixed(2)} seconds`);
   }
 
-  let instance: any;
-  timeit("FromObject", () => {
-    instance = lib.Star.fromObject(instanceDataClone);
+  let translatedData: any;
+  timeit("TranslateToData", () => {
+    translatedData = lib.Star.translateTo(instanceDataClone);
+  });
+
+  timeit("TranslateFromData", () => {
+    lib.Star.translateFrom(translatedData);
   });
 
   let protoEncoding: any;
   timeit("Encoding", () => {
-    protoEncoding = lib.Star.encode(instance).finish();
+    protoEncoding = lib.Star.encode(instanceDataClone2);
   });
 
-  let protoDecoding: any;
+  let protoDecoded: any;
   timeit("Decoding", () => {
-    protoDecoding = lib.Star.decode(protoEncoding);
-  });
-
-  let decoded: any;
-  timeit("ToObject", () => {
-    decoded = lib.Star.toObject(protoDecoding, { defaults: true });
+    protoDecoded = lib.Star.decode(protoEncoding);
   });
 
   if (print) {
-    console.log(JSON.stringify(decoded, undefined, " "));
-    console.log("Equals", isEqual(decoded, instanceData));
+    console.log(JSON.stringify(protoDecoded, undefined, " "));
+    console.log("Equals", isEqual(protoDecoded, instanceData));
   }
 
   let encodedJson: any;

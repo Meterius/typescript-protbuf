@@ -1,10 +1,11 @@
 import path from "path";
+import { loadSourceFile } from "./index";
 import { main as pbjsMain } from "protobufjs-cli/pbjs";
-import { main as pbtsMain } from "protobufjs-cli/pbts";
-import { generateProtoJsonFile, loadSourceFile } from "./index";
-import { writeFileSync } from "fs";
+import { writeFileSync, readFileSync } from "fs";
 import { ConfigRT } from "./config";
-import { generateProtoAndSetupFile } from "./generator";
+import { generateProtoAndLibInjection } from "./generator";
+// @ts-ignore
+import protobuf from "protocol-buffers";
 
 export async function main() {
   switch(process.argv[2]) {
@@ -13,32 +14,26 @@ export async function main() {
       const config = ConfigRT.check((await import(configPath)).default);
 
       const protoOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto");
-      const jsonOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.json");
       const libOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.lib.js");
+      const libPbOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.lib.pb.js");
+      const libPbjsOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.lib.pbjs.js");
       const libDsOutputFilePath = path.join(process.cwd(), config.outputBasename + ".proto.lib.d.ts");
 
       const {
-        protoFileContent, staticInjector,
-      } = generateProtoAndSetupFile(
-        await loadSourceFile(config.sourceFile), config,
+        protoFileContent, libFileContent,
+      } = generateProtoAndLibInjection(
+        await loadSourceFile(config.sourceFile), config, libOutputFilePath, libPbjsOutputFilePath, libPbOutputFilePath,
       );
 
       writeFileSync(protoOutputFilePath, protoFileContent);
-      const jsonContent = generateProtoJsonFile(protoOutputFilePath);
-      writeFileSync(jsonOutputFilePath, jsonContent);
 
-      const staticFileContent = await (new Promise<string>((resolve, reject) => {
-        pbjsMain(["-t", "static-module", "--no-create", "-w", "commonjs", "-o", libOutputFilePath, protoOutputFilePath], (err, output) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(output ?? "");
-          }
-        });
+      writeFileSync(libPbOutputFilePath, protobuf.toJS(null, {
+        filename: protoOutputFilePath,
+        resolveImport: (filePath: string) => readFileSync(filePath),
       }));
 
       await (new Promise<void>((resolve, reject) => {
-        pbtsMain(["-o", libDsOutputFilePath, libOutputFilePath], (err, output) => {
+        pbjsMain(["-t", "static-module", "--no-create", "-w", "commonjs", "-o", libPbjsOutputFilePath, protoOutputFilePath], (err) => {
           if (err) {
             reject(err);
           } else {
@@ -47,8 +42,7 @@ export async function main() {
         });
       }));
 
-      const injectedStaticFileContent = staticInjector(staticFileContent);
-      writeFileSync(libOutputFilePath, injectedStaticFileContent);
+      writeFileSync(libOutputFilePath, libFileContent);
     }
     break;
 

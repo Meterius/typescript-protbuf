@@ -1,50 +1,57 @@
-import {InterfaceDeclaration, PropertySignature, SourceFile, SyntaxKind, Type} from "ts-morph";
+import {PropertySignature, SourceFile, SyntaxKind, Type} from "ts-morph";
 import {Config} from "./config";
 import path from "path";
 
-export function generateProtoAndSetupFile(
+export function generateProtoAndLibInjection(
   source: SourceFile,
   config: Config,
+  libFilePath: string,
+  pbjsLibFilePath: string,
+  pbLibFilePath: string,
 ): {
   protoFileContent: string;
-  staticInjector: (content: string) => string;
+  libFileContent: string;
 } {
   const lines: string[] = ["syntax = \"proto3\";", ""];
   const collectedNodes = new Set<string>();
-  const collectedInterfaces: string[] = [];
-  const interfaceUnionFields: Record<string, [string, Type[], string | null, boolean][]> = {};
-  const interfaceEnumFields: Record<string, [string, string][]> = {};
-  const interfaceNullFields: Record<string, [string, boolean][]> = {};
+  const collectedInterfaces = new Set<string>();
+
+  const interfaceComplexFields: Record<string, [string, string, boolean][]> = {};
   const interfaceEscapedFieldTranslation: Record<string, [string, string][]> = {};
-  const interfaceLiteralFields: Record<string, [string, string][]> = {};
-  const literalEnumDefinitions: Record<string, unknown[]> = {};
+
+  const enumDefinitions: Record<string, unknown[]> = {};
+  const unionDefinitions: Record<string, Type[]> = {};
 
   let indentLevel = 0;
 
   const NullEnum = "SpecialNullSubstitute";
 
+  function registerComplexField(interfaceName: string, member: PropertySignature, complexName: string, isArray: boolean) {
+    const memberInterfaceName = member.getParentOrThrow().getSymbolOrThrow().getName();
+
+    if (!(memberInterfaceName in interfaceComplexFields)) {
+      interfaceComplexFields[memberInterfaceName] = [];
+    }
+
+    if (interfaceComplexFields[memberInterfaceName].every(item => item[0] !== getEscapedFieldName(member))) {
+      interfaceComplexFields[memberInterfaceName].push([getEscapedFieldName(member), complexName, isArray]);
+    }
+  }
+
   function getEscapedFieldName(member: PropertySignature) {
     return member.getName().replaceAll('_', '').toLocaleLowerCase();
   }
 
-  function getLiteralToEnumTranslatorVar(key: string) {
-    return `lit_enum_${key}`;
+  function getValueToEnumTranslatorVar(key: string) {
+    return `val_enum_${key}`;
   }
 
-  function getEnumToLiteralTranslatorVar(key: string) {
-    return `enum_lit_${key}`;
+  function getEnumToValueTranslatorVar(key: string) {
+    return `enum_val_${key}`;
   }
 
-  function getTypescriptEnumToEnumTranslatorVar(key: string) {
-    return `typ_enum_enum_${key}`;
-  }
-
-  function getEnumToTypescriptEnumTranslatorVar(key: string) {
-    return `enum_typ_enum_${key}`;
-  }
-
-  function getUnionFieldToOptionTranslatorVar(name: string, field: string) {
-    return `union_opt_${name}_${field}`;
+  function getUnionToOptionTranslatorVar(key: string) {
+    return `translate_union_opt_${key}`;
   }
 
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
@@ -119,26 +126,10 @@ export function generateProtoAndSetupFile(
         callbacks.push(() => {
           collectInterface(effTypeName);
         });
+
         return [rule, effTypeName];
       } else if (source.getEnum(effTypeName)) {
-        if (
-          member
-          && member.getParent()?.isKind(SyntaxKind.InterfaceDeclaration)
-        ) {
-          const memberInterfaceName = member.getParentOrThrow().getSymbolOrThrow().getName();
-
-          if (!(memberInterfaceName in interfaceEnumFields)) {
-            interfaceEnumFields[memberInterfaceName] = [];
-          }
-
-          if (interfaceEnumFields[memberInterfaceName].every(item => item[0] !== getEscapedFieldName(member))) {
-            interfaceEnumFields[memberInterfaceName].push([getEscapedFieldName(member), effTypeName]);
-          }
-        }
-
-        callbacks.push(() => {
-          collectEnum(effTypeName);
-        });
+        collectEnum(effTypeName);
 
         return [rule, effTypeName];
       }
@@ -217,22 +208,30 @@ export function generateProtoAndSetupFile(
         writeLine('}');
         writeLine();
       });
+
+      unionDefinitions[unionName] = types;
     }
 
     return unionName;
   }
 
   function createLiteralEnum(key: string, values: unknown[]) {
-    writeLine(`enum ${key} {`);
+    const optionalValues = [undefined, ...values];
 
-    withIndent(() => {
-      values.forEach((value, idx) => {
-        writeLine(`${key}_${idx} = ${idx};`);
+    callbacks.push(() => {
+      writeLine(`enum ${key} {`);
+
+      withIndent(() => {
+        optionalValues.forEach((value, idx) => {
+          writeLine(`${key}_${idx} = ${idx};`);
+        });
       });
+
+      writeLine('}');
+      writeLine();
     });
 
-    writeLine('}');
-    writeLine();
+    enumDefinitions[key] = optionalValues;
   }
 
   function collectEnum(name: string) {
@@ -241,25 +240,31 @@ export function generateProtoAndSetupFile(
     if (!collectedNodes.has(name)) {
       collectedNodes.add(name);
 
-      writeLine(`enum ${name} {`);
+      callbacks.push(() => {
+        writeLine(`enum ${name} {`);
 
-      withIndent(() => {
-        node.getMembers().forEach((member, idx) => {
-          writeLine(`${name.toUpperCase()}_${idx} = ${idx};`);
+        withIndent(() => {
+          (new Array(node.getMembers().length + 1)).fill(null).forEach((_, idx) => {
+            writeLine(`${name.toUpperCase()}_${idx} = ${idx};`);
+          });
         });
+
+        writeLine(`}`);
+        writeLine();
       });
 
-      writeLine(`}`);
-      writeLine();
+      enumDefinitions[name] = [undefined, ...node.getMembers().map(mem => mem.getValue())];
     }
   }
+
+  createLiteralEnum(NullEnum, [null]);
 
   function collectInterface(name: string) {
     const node = source.getInterfaceOrThrow(name);
 
     if (!collectedNodes.has(name)) {
       collectedNodes.add(name);
-      collectedInterfaces.push(name);
+      collectedInterfaces.add(name);
 
       const memberEscapedNames: string[] = [];
       node.getChildrenOfKind(SyntaxKind.PropertySignature).forEach((member) => {
@@ -323,63 +328,31 @@ export function generateProtoAndSetupFile(
 
             if (isLiteralUnionType(requiredUnionTypes)) {
               const literalKey = `Literal_${name}_${getEscapedFieldName(member)}`;
-              const literalValues = [
-                ...(fieldType === "optional " ? [undefined] : []),
-                ...requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []),
-              ];
+              const literalValues = requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []);
 
-              if (!(name in interfaceLiteralFields)) {
-                interfaceLiteralFields[name] = [];
-              }
-
-              interfaceLiteralFields[name].push([getEscapedFieldName(member), literalKey]);
-              literalEnumDefinitions[literalKey] = literalValues;
-
-              if (literalValues.length > 1) {
-                callbacks.push(
-                  () => createLiteralEnum(literalKey, literalValues),
-                );
-              } else {
-                return;
-              }
+              createLiteralEnum(literalKey, literalValues);
 
               fieldType = literalKey;
             } else if (requiredUnionTypes.length === 1) {
               memberType = requiredUnionTypes[0];
             } else {
-
-              if (!(name in interfaceUnionFields)) {
-                interfaceUnionFields[name] = [];
-              }
-
               fieldType = createOrCollectUnion(
                 requiredUnionTypes,
                 member,
               );
-
-              interfaceUnionFields[name].push([
-                getEscapedFieldName(member),
-                requiredUnionTypes,
-                source.getTypeAlias(fieldType) ? fieldType : null,
-                fieldRule === 'repeated ',
-              ]);
             }
           }
 
           if (!fieldType) {
             fieldType = parseType(memberType, member)?.[1];
-
-            if (fieldType === NullEnum) {
-              if (!(name in interfaceNullFields)) {
-                interfaceNullFields[name] = [];
-              }
-
-              interfaceNullFields[name].push([getEscapedFieldName(member), fieldRule === 'repeated '])
-            }
           }
 
           if (!fieldType) {
             throw new Error(`Could not determine field type of ${name}.${member.getName()}`);
+          }
+
+          if (fieldType in enumDefinitions || fieldType in unionDefinitions || collectedInterfaces.has(fieldType)) {
+            registerComplexField(name, member, fieldType, fieldRule === 'repeated ');
           }
 
           writeLine(`${fieldRule}${fieldType} ${getEscapedFieldName(member)} = ${idx + 1};`);
@@ -391,225 +364,272 @@ export function generateProtoAndSetupFile(
     }
   }
 
-  writeLine(`enum ${NullEnum} {`);
-  writeLine('\tNullSubstitution_0 = 0;');
-  writeLine('}');
-  writeLine();
-
   while (callbacks.length > 0) {
     callbacks.splice(0, 1)[0]();
   }
 
   const protoFileContent = lines.join('\n');
 
-  const staticInjector = (content: string) => {
-    function makeInterfaceFieldUnionInterfaceNameGetter(key: string, dataExpression: string) {
-      const makeGetter = config.unionInterfaceNameGetter?.[key];
+  function getUnionToOptionKey(type: Type) {
+    const scalarType = getScalar(type);
 
-      if (!makeGetter) {
-        throw new Error(`Config is missing union interface name getter for entry ${key}`);
-      } else {
-        return makeGetter(dataExpression);
-      }
+    if (scalarType) {
+      return scalarType;
+    } else if (type.isInterface()) {
+      return type.getSymbolOrThrow().getName();
+    } else {
+      throw new Error('Unexpected Union Type');
     }
+  }
 
-    function getUnionToOptionKey(type: Type) {
-      const scalarType = getScalar(type);
+  const fieldExpression = (fieldName: string) => `object[${JSON.stringify(fieldName)}]`;
 
-      if (scalarType) {
-        return scalarType;
-      } else if (type.isInterface()) {
-        return type.getSymbolOrThrow().getName();
-      } else {
-        throw new Error('Unexpected Union Type');
-      }
+  const makeFunctionDecl = (
+    complexName: string, functionName: string, args: string, content: string[], functionNameOverride?: string,
+  ) => {
+    return [
+      `${complexName}.${functionName} = function ${functionNameOverride ?? functionName}(${args}) {`,
+      ...content.map(line => `\t${line}`),
+      `};`,
+    ]
+  };
+
+  const makeIfElseChain = (items: [string, string[]][], elseContent?: string[]) => {
+    return (items.map(item => `if (${item[0]}) {\n${item[1].map(line => `\t${line}`).join("\n")}\n}`).join(" else ") + (
+      elseContent ? `else {\n` + elseContent.map(line => `\t${line}`).join("\n") + "}" : ''
+    )).split("\n");
+  };
+
+  function makeUnionInterfaceNameGetter(key: string, dataExpression: string) {
+    const makeGetter = config.unionInterfaceNameGetter?.[key];
+
+    if (!makeGetter) {
+      throw new Error(`Config is missing union interface name getter for entry ${key}`);
+    } else {
+      return makeGetter(dataExpression);
     }
+  }
 
-    function getRootInjection() {
-      return [
-        ...Object.entries(literalEnumDefinitions).map(([key, values]) => `const ${getLiteralToEnumTranslatorVar(key)} = {${values.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`),
-        '',
-        ...Object.entries(literalEnumDefinitions).map(([key, values]) => `const ${getEnumToLiteralTranslatorVar(key)} = [${values.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`),
-        '',
-        ...source.getEnums().map(enumDec => `const ${getTypescriptEnumToEnumTranslatorVar(enumDec.getName())} = {${enumDec.getMembers().flatMap((mem, idx) => [JSON.stringify(mem.getValue()) + ': ' + (idx + 1).toString()]).join(", ")}};`),
-        '',
-        ...source.getEnums().map(enumDec => `const ${getEnumToTypescriptEnumTranslatorVar(enumDec.getName())} = [undefined, ${enumDec.getMembers().map((mem) => JSON.stringify(mem.getValue())).join(", ")}];`),
-        '',
-        ...Object.entries(interfaceUnionFields).flatMap(([name, unionFields]) => unionFields.map(
-          ([fieldName, types]) => `const ${getUnionFieldToOptionTranslatorVar(name, fieldName)} = {${types.map((type, idx) => `${getUnionToOptionKey(type)}: "option${idx + 1}"`).join(", ")}};`,
-        )),
-        '',
-      ]
-    }
+  function makeObjectTranslator(objectExpression: string, type: Type, target: "translateTo" | "translateFrom") {
+    return type.isInterface() || type.isEnum() ? `${type.getSymbolOrThrow().getName()}.${target}(${objectExpression})` : objectExpression;
+  }
 
-    function getInterfaceInjections(
-      intDec: InterfaceDeclaration,
-    ): { fromObject: string[]; toObject: string[]; } {
-      const name = intDec.getName();
-      const unionFields = interfaceUnionFields[name] ?? [];
-      const enumFields = interfaceEnumFields[name] ?? [];
-      const nullFields = interfaceNullFields[name] ?? [];
-      const escapedFields = interfaceEscapedFieldTranslation[name] ?? [];
-      const literalFields = interfaceLiteralFields[name] ?? [];
+  const moduleTranslation = {
+    "protobufjs": "lib_pbjs",
+    "protocol-buffers": "lib_pb",
+  };
 
-      const fieldExpression = (fieldName: string) => `object[${JSON.stringify(fieldName)}]`;
+  const encoderModule = config.encodingModule ?? "protocol-buffers";
+  const decoderModule = config.decodingModule ?? "protocol-buffers";
 
-      const fromObject = [
-        ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
+  function getDecoderEncoderFunctionExpression(type: "encode" | "decode", complexName: string, dataExpression: string) {
+    const module = {
+      encode: encoderModule,
+      decode: decoderModule,
+    }[type];
+
+    const dataPrepExpression = {
+      "protobufjs": type === "encode" ? `${moduleTranslation[module]}.${complexName}.fromObject(${dataExpression})` : dataExpression,
+      "protocol-buffers": dataExpression,
+    }[module];
+
+    const dataProcExpression = `${moduleTranslation[module]}.${complexName}.${type}(${dataPrepExpression})${encoderModule === "protobufjs" && type === "encode" ? ".finish()" : ""}`;
+
+    return {
+      "protobufjs": type === "decode" ? `${moduleTranslation[module]}.${complexName}.toObject(${dataProcExpression})` : dataProcExpression,
+      "protocol-buffers": dataProcExpression,
+    }[module];
+  }
+
+  const complexObjects = [
+    ...collectedInterfaces,
+    ...Object.keys(enumDefinitions),
+    ...Object.keys(unionDefinitions),
+  ];
+
+  const libFileContent = [
+    `const lib_pbjs = require(${JSON.stringify("./" + path.relative(path.dirname(libFilePath), pbjsLibFilePath))});`,
+    `const lib_pb = require(${JSON.stringify("./" + path.relative(path.dirname(libFilePath), pbLibFilePath))});`,
+
+    '',
+
+    ...complexObjects.flatMap((complexName) => [
+      `const ${complexName} = {};`
+    ]),
+
+    '',
+
+    ...[
+      '/** Translation Variables **/',
+
+      '',
+
+      ...Object.entries(enumDefinitions).flatMap(([enumName, enumValues]) => [
+        `const ${getValueToEnumTranslatorVar(enumName)} = {${enumValues.flatMap((value, idx) => value === undefined ? [] : [JSON.stringify(value) + ': ' + idx.toString()]).join(", ")}};`,
+        `const ${getEnumToValueTranslatorVar(enumName)} = [${enumValues.map((value) => value === undefined ? 'undefined' : JSON.stringify(value)).join(", ")}];`,
+      ]),
+
+      ...Object.entries(unionDefinitions).flatMap(([unionName, unionTypes]) => [
+        `const ${getUnionToOptionTranslatorVar(unionName)} = {`,
+        ...unionTypes.map((type, idx) => `\t${getUnionToOptionKey(type)}: (object) => ({ "option${idx + 1}": ${makeObjectTranslator('object', type, 'translateTo')} }),`),
+        '};',
+      ]),
+
+      '',
+    ],
+    ...[
+      '/** translateTo Converters **/',
+
+      '',
+
+      ...Object.entries(enumDefinitions).flatMap(([enumName, enumValues]) => makeFunctionDecl(enumName, "translateTo", 'object', [
+        enumValues.length === 1 ? 'return undefined;' : `return ${getValueToEnumTranslatorVar(enumName)}[object];`,
+      ])),
+
+      '',
+
+      ...[...collectedInterfaces].flatMap((intName) => makeFunctionDecl(intName, "translateTo", 'object', [
+        ...(interfaceEscapedFieldTranslation[intName] ?? []).flatMap(([fieldName, fieldOriginalName]) => [
           `${fieldExpression(fieldName)} = ${fieldExpression(fieldOriginalName)};`,
           `delete ${fieldExpression(fieldOriginalName)};`,
         ]),
-        ...unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
-          const dataExpression = fieldExpression(fieldName) + (isArray ? "[idx]" : "");
-
-          const nonScalarFieldTypes = fieldTypes.filter(child => !getScalar(child));
-
-          const hasInterfaceType = nonScalarFieldTypes.length > 0;
-          const hasNullType = fieldTypes.some(child => child.isNull());
-
-          const uniqueNonNullScalar = fieldTypes.find(child => getScalar(child) && !child.isNull());
-          let typeExpression = uniqueNonNullScalar ? JSON.stringify(getScalar(uniqueNonNullScalar)) : `typeof ${dataExpression}`;
-
-          if (hasInterfaceType) {
-            const objectTypeExpression = nonScalarFieldTypes.length === 1 ? JSON.stringify(nonScalarFieldTypes[0].getSymbolOrThrow().getName()) : makeInterfaceFieldUnionInterfaceNameGetter(
-              fieldUnionName ?? (intDec.getName() + "." + fieldName),
-              dataExpression,
-            );
-
-            typeExpression = `typeof ${dataExpression} === 'object' ? (${objectTypeExpression}) : (${typeExpression})`;
-          }
-
-          if (hasNullType) {
-            typeExpression = `${dataExpression} === null ? "null" : (${typeExpression})`;
-          }
-
-          return [
-            '',
-            `if (${fieldExpression(fieldName)} !== undefined) {`,
+        '',
+        ...(interfaceComplexFields[intName] ?? []).flatMap(([fieldName, complexName, isArray]) => [
+          `if (${fieldExpression(fieldName)} !== undefined) {`,
+          ...[
             ...(isArray ? [
-              `\t${fieldExpression(fieldName)}.forEach((_, idx) => {`,
-            ] : []),
-            ...[
-              `${dataExpression} = { [${getUnionFieldToOptionTranslatorVar(name, fieldName)}[${typeExpression}]]: ${dataExpression} };`,
-            ].map(line => isArray ? `\t\t${line}` : `\t${line}`),
+              `${fieldExpression(fieldName)}.forEach((_, idx) => {`,
+              `\t${fieldExpression(fieldName)}[idx] = ${complexName}.translateTo(${fieldExpression(fieldName)}[idx]);`,
+              `});`,
+            ] : [
+              `${fieldExpression(fieldName)} = ${complexName}.translateTo(${fieldExpression(fieldName)});`,
+            ]),
+          ].map(line => `\t${line}`),
+          `}`,
+        ]),
+        '',
+        'return object;',
+      ])),
+
+      '',
+
+      ...Object.entries(unionDefinitions).flatMap(([unionName, unionTypes]) => makeFunctionDecl(unionName, "translateTo", 'object', (() => {
+        const nonScalarFieldTypes = unionTypes.filter(child => !getScalar(child));
+
+        const hasInterfaceType = nonScalarFieldTypes.length > 0;
+        const hasNullType = unionTypes.some(child => child.isNull());
+
+        const uniqueNonNullScalar = unionTypes.find(child => getScalar(child) && !child.isNull());
+        let typeExpression = uniqueNonNullScalar ? JSON.stringify(getScalar(uniqueNonNullScalar)) : `typeof object`;
+
+        if (hasInterfaceType) {
+          const objectTypeExpression = nonScalarFieldTypes.length === 1 ? JSON.stringify(nonScalarFieldTypes[0].getSymbolOrThrow().getName()) : makeUnionInterfaceNameGetter(unionName, 'object');
+          typeExpression = `typeof object === 'object' ? (${objectTypeExpression}) : (${typeExpression})`;
+        }
+
+        if (hasNullType) {
+          typeExpression = `object === null ? "null" : (${typeExpression})`;
+        }
+
+        return [
+          `return ${getUnionToOptionTranslatorVar(unionName)}[${typeExpression}](object);`
+        ];
+      })())),
+
+      '',
+    ],
+    ...[
+      '/** TranslateFrom Converters **/',
+      '',
+
+      ...Object.entries(enumDefinitions).flatMap(([enumName]) => makeFunctionDecl(enumName, "translateFrom", 'object', [
+        `return ${getEnumToValueTranslatorVar(enumName)}[object || 0];`,
+      ])),
+
+      '',
+
+      '',
+
+      ...[...collectedInterfaces].flatMap((intName) => makeFunctionDecl(intName, "translateFrom", 'object', [
+        ...source.getInterfaceOrThrow(intName).getChildrenOfKind(SyntaxKind.PropertySignature).flatMap((mem) => [
+          `object.${getEscapedFieldName(mem)} = object.${getEscapedFieldName(mem)} === null ? undefined : object.${getEscapedFieldName(mem)};`
+        ]),
+        '',
+        ...(interfaceComplexFields[intName] ?? []).flatMap(([fieldName, complexName, isArray]) => [
+          `if (${fieldExpression(fieldName)} !== undefined) {`,
+          ...[
             ...(isArray ? [
-              '\t});',
-            ] : []),
-            `}`,
-            '',
-          ];
-        }),
-        ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `${fieldExpression(fieldName)} = ${getTypescriptEnumToEnumTranslatorVar(enumName)}[${fieldExpression(fieldName)}];`,
-        ])),
-        ...(nullFields.flatMap(([fieldName, isArray]) => [
-          `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => 0)` : `0`)} : undefined;`,
-        ])),
-        ...(literalFields.flatMap(([fieldName, literalKey]) => literalEnumDefinitions[literalKey].length === 1 ? [] : [
-          `${fieldExpression(fieldName)} = ${getLiteralToEnumTranslatorVar(literalKey)}[${fieldExpression(fieldName)}];`,
-        ])),
-      ];
-
-      const toObject = [
-        ...(unionFields.flatMap(([fieldName, fieldTypes, fieldUnionName, isArray]) => {
-          const dataExpression = fieldExpression(fieldName) + (isArray ? "[idx]" : "");
-          const nullOptionIndex = fieldTypes.findIndex(child => getScalar(child) === "null");
-
-          const assignmentCollectExpression = fieldTypes.flatMap(
-            (_, idx) => idx !== nullOptionIndex ? [`${dataExpression}.option${idx + 1}`] : []
-          ).join(' ?? ');
-          const assignmentLineExpression = nullOptionIndex !== -1 ? (
-            `${dataExpression}.option${nullOptionIndex + 1} === 0 ? null : (${assignmentCollectExpression})`
-          ) : assignmentCollectExpression;
-
-          return isArray ? [
-            `if (${fieldExpression(fieldName)} !== undefined) {`,
-            `\t${fieldExpression(fieldName)}.forEach((_, idx) => {`,
-            `\t\tif (${dataExpression} !== undefined) {`,
-            `\t\t\t${dataExpression} = ${assignmentLineExpression};`,
-            `\t\t}`,
-            `\t});`,
-            `}`,
-            '',
-          ] : [
-            `if (${dataExpression} !== undefined) {`,
-            `\t${dataExpression} = ${assignmentLineExpression};`,
-            `}`,
-            '',
-          ];
-        })),
-        ...(enumFields.flatMap(([fieldName, enumName]) => [
-          `${fieldExpression(fieldName)} = ${getEnumToTypescriptEnumTranslatorVar(enumName)}[${fieldExpression(fieldName)} ?? 0];`,
-        ])),
-        ...(nullFields.flatMap(([fieldName, isArray]) => [
-          `${fieldExpression(fieldName)} = ${fieldExpression(fieldName)} !== undefined ? ${(isArray ? `${fieldExpression(fieldName)}.map(() => null)` : `null`)} : undefined;`,
-        ])),
-        ...(literalFields.flatMap(([fieldName, literalKey]) => literalEnumDefinitions[literalKey].length === 1 ? [
-          `${fieldExpression(fieldName)} = ${JSON.stringify(literalEnumDefinitions[literalKey][0])};`,
-        ] : [
-          `${fieldExpression(fieldName)} = ${getEnumToLiteralTranslatorVar(literalKey)}[${fieldExpression(fieldName)} ?? 0];`,
-        ])),
-        ...escapedFields.flatMap(([fieldName, fieldOriginalName]) => [
+              `${fieldExpression(fieldName)}.forEach((_, idx) => {`,
+              `\t${fieldExpression(fieldName)}[idx] = ${complexName}.translateFrom(${fieldExpression(fieldName)}[idx]);`,
+              `});`,
+            ] : [
+              `${fieldExpression(fieldName)} = ${complexName}.translateFrom(${fieldExpression(fieldName)});`,
+            ]),
+          ].map(line => `\t${line}`),
+          `}`,
+          '',
+        ]),
+        '',
+        ...(interfaceEscapedFieldTranslation[intName] ?? []).flatMap(([fieldName, fieldOriginalName]) => [
           `${fieldExpression(fieldOriginalName)} = ${fieldExpression(fieldName)};`,
           `delete ${fieldExpression(fieldName)};`,
         ]),
-      ];
+        '',
+        'return object;',
+      ])),
 
-      return {
-        fromObject, toObject,
-      };
-    }
-
-    const contentLines = content.split("\n");
-
-    const compiledFunctionRootLine = contentLines.findIndex(
-      line => line.startsWith(`"use strict";`),
-    );
-
-    if (compiledFunctionRootLine === -1) {
-      throw new Error('Failed to compile');
-    } else {
-      contentLines.splice(compiledFunctionRootLine + 2, 0, ...getRootInjection());
-    }
-
-    collectedInterfaces.forEach((name) => {
-      const intDec = source.getInterfaceOrThrow(name);
-      const { fromObject, toObject } = getInterfaceInjections(intDec);
-
-      const fromObjectLine = contentLines.findIndex(line => line.trim() === `${name}.fromObject = function fromObject(object) {`);
-
-      if (fromObjectLine === -1) {
-        throw new Error('Failed to compile');
-      } else {
-        contentLines.splice(
-          fromObjectLine + 3,
-          0,
-          ...['', '/** FromObject Injection START **/', ...fromObject, '/** FromObject Injection END **/', ''].map(line => `\t\t${line}`)
-        );
-      }
-
-      const toObjectLine = contentLines.findIndex(
-        (line, idx) => line.trim() === "};" && contentLines.some(
-          (priorLine, jdx) => jdx < idx && priorLine.trim() === `${name}.toObject = function toObject(message, options) {`
+      ...Object.entries(unionDefinitions).flatMap(([unionName, unionTypes]) => makeFunctionDecl(unionName, "translateFrom", 'object', [
+        ...makeIfElseChain(
+          unionTypes.map(
+            (type, idx) => [
+              `object.option${idx + 1} !== undefined && object.option${idx + 1} !== null`, [
+              `const data = ${makeObjectTranslator(`object.option${idx + 1}`, type, "translateFrom")};`,
+              `delete object.option${idx + 1};`,
+              `return data;`
+            ],
+          ]),
         ),
-      );
+      ])),
 
-      if (toObjectLine === -1) {
-        throw new Error('Failed to compile');
-      } else {
-        contentLines.splice(
-          toObjectLine - 1,
-          0,
-          ...['', '/** ToObject Injection START **/', ...toObject, '/** ToObject Injection END **/', ''].map(line => `\t\t${line}`)
-        );
-      }
-    });
+      '',
+    ],
+    ...[
+      '/** Encode/Decode Wrappers **/',
 
-    return contentLines.join("\n");
-  }
+      '',
+
+      ...[...collectedInterfaces, ...Object.keys(unionDefinitions)].flatMap((complexName) => [
+        ...makeFunctionDecl(complexName, "encode", "object", [
+          `const data = ${complexName}.translateTo(object);`,
+          `return ${getDecoderEncoderFunctionExpression("encode", complexName, "data")};`
+        ]),
+        ...makeFunctionDecl(complexName, "decode", "buffer", [
+          `const data = ${getDecoderEncoderFunctionExpression("decode", complexName, "buffer")};`,
+          `return ${complexName}.translateFrom(data);`
+        ]),
+      ]),
+
+      '',
+    ],
+    ...[
+      '/** Module Exports **/',
+
+      '',
+
+      `module.exports = {`,
+
+      ...complexObjects.flatMap((complexName) => [
+        `${complexName}: ${complexName},`,
+      ]).map(line => `\t${line}`),
+
+      '};',
+
+      '',
+    ]
+  ].join('\n');
 
   return {
-    staticInjector,
+    libFileContent,
     protoFileContent,
   };
 }
