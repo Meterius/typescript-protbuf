@@ -53,6 +53,7 @@ function main() {
         status: 1,
         children: [],
       },
+      /*
       size2: {
         test: [],
         population: 100,
@@ -60,21 +61,17 @@ function main() {
         habitable3: [5],
         habitable: undefined,
         habitable2: undefined,
-      },
+      },*/
       status: 0,
       statusStr: StatusString.Running,
       children: [],
     });
   };
 
-  const print = false;
+  const print = true;
 
   for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
-  }
-
-  if (print) {
-    console.log(JSON.stringify(instanceData, undefined, " "));
   }
 
   let instanceDataClone = cloneDeep(instanceData);
@@ -90,6 +87,8 @@ function main() {
   let translatedData: any;
   timeit("TranslateToData", () => {
     translatedData = lib.Star.translateTo(instanceDataClone);
+    console.log("Translated Data");
+    console.log(JSON.stringify(translatedData, undefined, " "));
   });
 
   timeit("TranslateFromData", () => {
@@ -107,6 +106,9 @@ function main() {
   });
 
   if (print) {
+    console.log("Instance");
+    console.log(JSON.stringify(instanceData, undefined, " "));
+    console.log("Decoded Instance");
     console.log(JSON.stringify(protoDecoded, undefined, " "));
     console.log("Equals", isEqual(protoDecoded, instanceData));
   }

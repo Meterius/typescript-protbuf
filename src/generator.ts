@@ -18,6 +18,7 @@ export function generateProtoAndLibInjection(
 
   const interfaceComplexFields: Record<string, [string, string, boolean][]> = {};
   const interfaceEscapedFieldTranslation: Record<string, [string, string][]> = {};
+  const interfaceSkippedFields: Record<string, [string, unknown][]> = {};
 
   const enumDefinitions: Record<string, unknown[]> = {};
   const unionDefinitions: Record<string, Type[]> = {};
@@ -38,8 +39,8 @@ export function generateProtoAndLibInjection(
     }
   }
 
-  function getEscapedFieldName(member: PropertySignature) {
-    return member.getName().replaceAll('_', '').toLocaleLowerCase();
+  function getEscapedFieldName(member: PropertySignature | string) {
+    return (typeof member === "string" ? member : member.getName()).replaceAll('_', '').toLocaleLowerCase();
   }
 
   function getScalar(type: Type): "string" | "number" | "boolean" | "null" | null {
@@ -204,13 +205,11 @@ export function generateProtoAndLibInjection(
   }
 
   function createLiteralEnum(key: string, values: unknown[]) {
-    const optionalValues = [undefined, ...values];
-
     callbacks.push(() => {
       writeLine(`enum ${key} {`);
 
       withIndent(() => {
-        optionalValues.forEach((value, idx) => {
+        values.forEach((value, idx) => {
           writeLine(`${key}_${idx} = ${idx};`);
         });
       });
@@ -219,7 +218,7 @@ export function generateProtoAndLibInjection(
       writeLine();
     });
 
-    enumDefinitions[key] = optionalValues;
+    enumDefinitions[key] = values;
   }
 
   function collectEnum(name: string) {
@@ -245,7 +244,7 @@ export function generateProtoAndLibInjection(
     }
   }
 
-  createLiteralEnum(NullEnum, [null]);
+  createLiteralEnum(NullEnum, [undefined, null]);
 
   function collectInterface(name: string) {
     const node = source.getInterfaceOrThrow(name);
@@ -280,6 +279,7 @@ export function generateProtoAndLibInjection(
           let memberType: Type = member.getType();
           let fieldRule = '';
           let fieldType;
+          let skipValue;
 
           if (memberType.isArray()) {
             fieldRule = 'repeated ';
@@ -316,9 +316,18 @@ export function generateProtoAndLibInjection(
 
             if (isLiteralUnionType(requiredUnionTypes)) {
               const literalKey = `Literal_${name}_${getEscapedFieldName(member)}`;
-              const literalValues = requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []);
+              const literalValues: unknown[] = requiredUnionTypes.flatMap((child) => child.isStringLiteral() ? [<string> child.getLiteralValue()] : []);
+
+              if (fieldRule === 'optional ') {
+                literalValues.splice(0, 0, undefined);
+                fieldRule = '';
+              }
 
               createLiteralEnum(literalKey, literalValues);
+
+              if (literalValues.length === 1) {
+                skipValue = literalValues[0];
+              }
 
               fieldType = literalKey;
             } else if (requiredUnionTypes.length === 1) {
@@ -333,17 +342,33 @@ export function generateProtoAndLibInjection(
 
           if (!fieldType) {
             fieldType = parseType(memberType, member)?.[1];
+
+            if (fieldType === NullEnum && fieldRule === 'optional ') {
+              fieldRule = '';
+            }
           }
 
           if (!fieldType) {
             throw new Error(`Could not determine field type of ${name}.${member.getName()}`);
           }
 
-          if (fieldType in enumDefinitions || fieldType in unionDefinitions || collectedInterfaces.has(fieldType)) {
+          if (skipValue === undefined && (fieldType in enumDefinitions || fieldType in unionDefinitions || collectedInterfaces.has(fieldType))) {
             registerComplexField(name, member, fieldType, fieldRule === 'repeated ');
           }
 
-          writeLine(`${fieldRule}${fieldType} ${getEscapedFieldName(member)} = ${idx + 1};`);
+          if (skipValue === undefined) {
+            writeLine(`${fieldRule}${fieldType} ${getEscapedFieldName(member)} = ${idx + 1};`);
+          } else {
+            if (!(name in interfaceSkippedFields)) {
+              interfaceSkippedFields[name] = [];
+            }
+
+            interfaceSkippedFields[name].push([member.getName(), skipValue]);
+
+            interfaceEscapedFieldTranslation[name] = interfaceEscapedFieldTranslation[name].filter(
+              item => item[0] !== getEscapedFieldName(member),
+            );
+          }
         });
       });
 
@@ -410,7 +435,10 @@ export function generateProtoAndLibInjection(
   }
 
   function makeObjectTranslator(objectExpression: string, type: Type, target: "translateTo" | "translateFrom") {
-    return type.isInterface() || type.isEnum() ? `${type.getSymbolOrThrow().getName()}.${target}(${objectExpression})` : objectExpression;
+    let complexName = type.isInterface() || type.isEnum() ? type.getSymbolOrThrow().getName() : (
+      getScalar(type) === "null" ? NullEnum : undefined
+    );
+    return complexName ? `${complexName}.${target}(${objectExpression})` : objectExpression;
   }
 
   const moduleTranslation = {
@@ -500,6 +528,10 @@ export function generateProtoAndLibInjection(
           `}`,
         ]),
         '',
+        ...(interfaceSkippedFields[intName] ?? []).flatMap(([fieldOriginalName]) => [
+          `delete ${fieldExpression(fieldOriginalName)};`,
+        ]),
+        '',
         'return object;',
       ])),
 
@@ -524,17 +556,12 @@ export function generateProtoAndLibInjection(
         }
 
         return [
-          'const data = {};',
-          '',
           ...makeSwitch(typeExpression, unionTypes.map((child, idx) => [
             `"${getScalar(child) ?? child.getSymbolOrThrow().getName()}"`,
             [
-              `data.object${idx + 1} = ${getScalar(child) === null ? child.getSymbolOrThrow().getName() + ".translateTo(object)" : "object"};`,
-              'break;',
+              `return { option${idx + 1}: ${makeObjectTranslator('object', child, "translateTo")} };`,
             ],
           ])),
-          '',
-          `return data`,
         ];
       })())),
 
@@ -578,6 +605,10 @@ export function generateProtoAndLibInjection(
         ...(interfaceEscapedFieldTranslation[intName] ?? []).flatMap(([fieldName, fieldOriginalName]) => [
           `${fieldExpression(fieldOriginalName)} = ${fieldExpression(fieldName)};`,
           `delete ${fieldExpression(fieldName)};`,
+        ]),
+        '',
+        ...(interfaceSkippedFields[intName] ?? []).flatMap(([fieldOriginalName, skipValue]) => [
+          `${fieldExpression(fieldOriginalName)} = ${JSON.stringify(skipValue)};`,
         ]),
         '',
         'return object;',
