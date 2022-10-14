@@ -19,15 +19,19 @@ function main() {
         __lassification4: "Constant",
         __lassification5: "Constant",
         size: 2,children:[],status:1,
+        children2:[],
       }],
       habitable3: [4],
       habitable: undefined,
       habitable2: {
         __lassification5: "Constant",
         __lassification4: "Constant",
-        size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa"},
+        size:5,status:0,children:[],classification:"Noasdasddsadsasaddsa",
+        children2:[],
+      },
     },
     children: [],
+    children2:[],
   };
 
   const addChild = () => {
@@ -51,6 +55,7 @@ function main() {
         statusStr: StatusString.Running,
         status: 1,
         children: [],
+        children2:[],
       },
       /*
       size2: {
@@ -64,6 +69,7 @@ function main() {
       status: 0,
       statusStr: StatusString.Running,
       children: [],
+      children2:[],
     });
   };
 
@@ -109,7 +115,7 @@ function main() {
     console.log(JSON.stringify(instanceData, undefined, " "));
     console.log("Decoded Instance");
     console.log(JSON.stringify(protoDecoded, undefined, " "));
-    console.log("Equals", isEqual(protoDecoded, instanceData));
+    console.log("Equals", isEqual(JSON.parse(JSON.stringify(protoDecoded)), JSON.parse(JSON.stringify(instanceData))));
   }
 
   let encodedJson: any;

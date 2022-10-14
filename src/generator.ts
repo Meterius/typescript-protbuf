@@ -73,6 +73,7 @@ export function generateProtoAndLibInjection(
     ...source.getInterfaces().map(type => type.getSymbolOrThrow().getName()),
   ]).map(type => () => {
     if (source.getInterface(type)) {
+      collectedInterfaces.add(source.getInterfaceOrThrow(type).getName());
       collectInterface(type);
     } else if(source.getEnum(type)) {
       if (source.getEnumOrThrow(type).getMembers().every(mem => typeof mem.getValue() !== "number")) {
@@ -113,6 +114,7 @@ export function generateProtoAndLibInjection(
       const effTypeName = effectiveType.getSymbol()?.getName() ?? '';
 
       if (source.getInterface(effTypeName)) {
+        collectedInterfaces.add(effTypeName);
         callbacks.push(() => {
           collectInterface(effTypeName);
         });
@@ -252,7 +254,6 @@ export function generateProtoAndLibInjection(
 
     if (!collectedNodes.has(name)) {
       collectedNodes.add(name);
-      collectedInterfaces.add(name);
 
       const memberEscapedNames: string[] = [];
       node.getChildrenOfKind(SyntaxKind.PropertySignature).forEach((member) => {

@@ -17,7 +17,8 @@ export interface Star {
   size2?: PlanetOrStar;
   status: Status;
   statusStr?: StatusString;
-  children: Star[];
+  children: Array<Star>;
+  children2: Array<Planet>;
 }
 
 export interface Planet {
