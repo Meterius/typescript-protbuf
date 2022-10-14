@@ -674,8 +674,8 @@ export function generateProtoAndLibInjection(
       `\ttranslateFrom(data: any): any;`,
       ...(complexName in enumDefinitions ? [] : [
         ``,
-        `\tencode(object: any): Buffer | UInt8Array;`,
-        `\tdecode(buffer: Buffer | UInt8Array): any;`,
+        `\tencode(object: any): Buffer | Uint8Array;`,
+        `\tdecode(buffer: Buffer | Uint8Array): any;`,
       ]),
       `}`,
       ``,
