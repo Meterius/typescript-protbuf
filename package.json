@@ -15,8 +15,7 @@
   "scripts": {
     "test:generate": "ts-node bin/typescript-protobuf.ts generate test/example.config.ts",
     "test:encode-decode": "ts-node test/example-encode-decode.ts",
-    "test": "npm run test:generate && npm run test:encode-decode",
-    "postinstall": "patch-package"
+    "test": "npm run test:generate && npm run test:encode-decode"
   },
   "repository": {
     "type": "git",
@@ -41,7 +40,6 @@
   "devDependencies": {
     "@types/lodash": "^4.14.186",
     "lodash": "^4.17.21",
-    "patch-package": "^6.4.7",
     "ts-node-dev": "^2.0.0"
   }
 }
