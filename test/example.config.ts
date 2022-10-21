@@ -7,7 +7,7 @@ const config: Config = {
     PlanetOrStar: (data) => `${data}.size !== undefined ? 'Star' : 'Planet'`,
   },
   numberEncoding: {
-    default: "int32",
+    default: "float",
     overrides: {
       "Planet.habitable3": "float",
     },

@@ -4,7 +4,7 @@ import * as lib from "./example.proto.lib";
 
 function main() {
   const instanceData: Star = {
-    size: 5,
+    size: -2823509408931002000,
     __lassification5: "Constant",
     classification: "heyaaaaaaaaaaaaaaaaaaaaaaaaa",
     c__lassification3: "Constant",
@@ -73,7 +73,7 @@ function main() {
     });
   };
 
-  const print = true;
+  const print = false;
 
   for (let i = 0; i < (print ? 0 : 200000); i++) {
     addChild();
@@ -92,9 +92,12 @@ function main() {
   let translatedData: any;
   timeit("TranslateToData", () => {
     translatedData = lib.Star.translateTo(instanceDataClone);
+  });
+
+  if (print) {
     console.log("Translated Data");
     console.log(JSON.stringify(translatedData, undefined, " "));
-  });
+  }
 
   timeit("TranslateFromData", () => {
     lib.Star.translateFrom(translatedData);

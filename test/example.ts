@@ -9,7 +9,7 @@ export enum StatusString {
 }
 
 export interface Star {
-  classification?: "Noasdasddsadsasaddsa" | "heyaaaaaaaaaaaaaaaaaaaaaaaaa" | "test";
+  classification?: string;
   c__lassification3?: "Constant",
   __lassification4: "Constant",
   __lassification5: "Constant",
